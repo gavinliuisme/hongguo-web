@@ -929,6 +929,7 @@
       // 简介交给悬浮气泡；集数按钮只显示当前集数（每集刷新，不再消失）
       setAbstract(meta.abstract || '');
       syncFavBtn();
+      syncRelBtn();
       updatePMeta();
       // 标记本次打开：playAt 首次起播时会消费它（用于刷新历史时间戳并置顶）
       ctx.freshOpen = true;
@@ -999,6 +1000,7 @@
     $('pEpGrid').innerHTML = '';
     closeEpCard();
     syncFavBtn(); // 单集无 series_id → 收藏按钮隐藏
+    syncRelBtn(); // 单集也带剧名，有就能搜关联
     updatePMeta(); // 无剧集 → 集数按钮自动隐藏
     playerEl.hidden = false;
     play(vid);
@@ -1286,6 +1288,37 @@
     toast(on ? '已加入收藏' : '已取消收藏', 1600);
   });
 
+  /* ---------- 关联剧集按钮（播放器内） ---------- */
+  /**
+   * 可搜索的剧名。空标题、或 openPlayer 的占位标题「播放」时返回空串 ——
+   * 拿「播放」去搜索只会得到一堆无关结果，等于按钮坏掉了。
+   */
+  function searchNameOf() {
+    const t = String(ctx.title || '').trim();
+    return t && t !== '播放' ? t : '';
+  }
+
+  /** 同步「关联剧集」按钮：有剧名才显示，占位规则与简介/收藏按钮一致。 */
+  function syncRelBtn() {
+    $('pRelBtn').hidden = !searchNameOf();
+  }
+
+  /**
+   * 点击「关联剧集」：把当前剧名填进搜索框并执行搜索，用于查找该剧的
+   * 其他季或版本（换季常改名或拆成多部，搜剧名能把它们并排列出来）。
+   *
+   * 先关播放器再搜索：播放器是遮罩弹层，压在结果列表之上。关闭复用
+   * pClose 的完整清理（停播、复位全屏、清空选集），不另写一套。
+   */
+  $('pRelBtn').addEventListener('click', () => {
+    const q = searchNameOf();
+    if (!q) { toast('当前没有可搜索的剧名'); return; }
+    $('pClose').click();
+    searchEl.value = q; // 回填搜索框：搜了什么一目了然，也能接着改词重搜
+    window.scrollTo({ top: 0 }); // 搜索框在顶栏，滚回去让用户看见
+    doSearch(q);
+  });
+
   /* ---------- 历史 / 收藏 列表 ---------- */
   const libModal = $('libModal');
   let libKind = 'history'; // 当前展示的列表：history | fav
@@ -1438,10 +1471,12 @@
     // 清掉主体后同步收藏按钮：没有可收藏的剧时按钮应隐藏，
     // 否则上一次播放残留的 ★/☆ 状态会留在空播放器上。
     ctx.seriesId = '';
+    ctx.title = '';
     ctx.cover = '';
     ctx.total = 0;
     ctx.freshOpen = false;
     syncFavBtn();
+    syncRelBtn();
     updatePMeta(); // 无剧集 → 集数按钮隐藏
     // 重置解码检测，下次打开会重新判定（换设备/换源可能结论不同）
     codecChecked = false;

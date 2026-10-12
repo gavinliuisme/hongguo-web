@@ -55,7 +55,10 @@
           <!-- 简介按钮：hover/focus 时在下方浮出简介，避免常驻占位导致抖动 -->
           <button id="pInfoBtn" class="info-btn" aria-describedby="pInfoPop"
                   title="查看简介" hidden>简介</button>
-          <!-- 收藏按钮：紧跟简介按钮，点击切换收藏状态 -->
+          <!-- 关联剧集按钮：位于简介与收藏之间，点击用当前剧名搜索其他季/版本 -->
+          <button id="pRelBtn" class="info-btn"
+                  title="用当前剧名搜索，查找其他季或版本" hidden>关联剧集</button>
+          <!-- 收藏按钮：与简介/关联剧集按钮同排，点击切换收藏状态 -->
           <button id="pFavBtn" class="info-btn fav-btn" title="收藏这部短剧" hidden>★ 收藏</button>
         </div>
       </div>
