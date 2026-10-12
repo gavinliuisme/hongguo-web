@@ -1,6 +1,7 @@
 package com.hongguo.api.service;
 
 import com.hongguo.api.core.Device;
+import com.hongguo.api.core.PureSign;
 import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Http;
@@ -20,12 +21,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 红果短剧 API 客户端。
  *
  * 移植自 server/src/client.js。保留原有语义：设备身份池、_rticket 时间戳、
  * x-ss-stub MD5、列表类接口免签、video_model 直链5 小时缓存、风控/登录态退避重试。
+ *
+ * 与 Node 版的两处架构变化：
+ *  - 签名不再走外部 unidbg 服务，而是本进程内 PureSign 纯代码计算
+ *    （branch==1 时抖动 _rticket 规避，实测服务端返回 code=0）；
+ *  - 搜索与分集详情在 App 接口之外增加官网数据源（WebSource）：
+ *    搜索官网优先（App 搜索需登录态，未登录恒空），分集详情 App 优先、
+ *    失败回落官网。
  */
 public final class Client {
 
@@ -110,6 +119,25 @@ public final class Client {
 
     public static Device.Identity identity() { return IDENTITY; }
 
+    /**
+     * vid -> series_id 反查表：播放链路据此判断某集能否走官网明文直链
+     * （/stream?vid= 只带 vid，不带剧 id，而官网直链页需要两者）。
+     */
+    private static final Map<String, String> SID_OF_VID = new ConcurrentHashMap<>();
+
+    /** 记录 vid 所属剧集。 */
+    static void rememberVid(String vid, String sid) {
+        if (vid == null || vid.isEmpty() || sid == null || sid.isEmpty()) return;
+        // 有界：看过的剧多了之后整体清空重建，避免长跑进程无限增长
+        if (SID_OF_VID.size() > 8192) SID_OF_VID.clear();
+        SID_OF_VID.put(vid, sid);
+    }
+
+    /** 反查 vid 所属剧集；未知返回 null。 */
+    public static String seriesIdOfVid(String vid) {
+        return vid == null ? null : SID_OF_VID.get(vid);
+    }
+
     // ==================== 榜单 / 体裁常量 ====================
 
     public static final Map<String, String> RANK_BOARDS = new LinkedHashMap<>();
@@ -187,11 +215,21 @@ public final class Client {
 
     /** 组装完整 URL（含 base_query、设备身份、_rticket）。 */
     public static String buildUrl(String pathname, Map<String, Object> extra) {
+        return buildUrl(pathname, extra, System.currentTimeMillis());
+    }
+
+    /**
+     * 组装完整 URL，_rticket 由调用方指定。
+     *
+     * 签名分支 branch==1 时服务端不认，需要抖动 _rticket 后重签重发——
+     * 此时 URL 必须用同一个 pathname/extra 重新组装，只有 _rticket 不同。
+     */
+    public static String buildUrl(String pathname, Map<String, Object> extra, long rticket) {
         Map<String, Object> q = new LinkedHashMap<>(BASE_QUERY);
         Safeguards.PoolDevice dev = currentDevice();
         if (dev != null) q.putAll(dev.query);
         if (extra != null) q.putAll(extra);
-        q.put("_rticket", String.valueOf(System.currentTimeMillis()));
+        q.put("_rticket", String.valueOf(rticket));
 
         StringBuilder qs = new StringBuilder();
         for (Map.Entry<String, Object> e : q.entrySet()) {
@@ -236,13 +274,20 @@ public final class Client {
         byte[] data = (byte[]) built[1];
 
         if (signed) {
-            try {
-                headers.putAll(Signer.sign(url, headers));
-            } catch (IOException e) {
-                Safeguards.UpstreamResponseError err =
-                        new Safeguards.UpstreamResponseError(e.getMessage());
-                throw err;
+            // 本地纯代码签名（PureSign，移植自 jackotom/hongguo-drama）。
+            // 注意 branch==1 的签名变体服务端不认（实测 110001），
+            // 需抖动 _rticket 换一个 query 重签，最多 32 次。
+            long khronos = System.currentTimeMillis() / 1000L;
+            long rticket = System.currentTimeMillis();
+            int guard = 0;
+            while (PureSign.branchOf(url, data, khronos) == 1 && guard++ < 32) {
+                rticket += 1;
+                url = buildUrl(pathname, extraQuery, rticket);
             }
+            if (guard >= 32) {
+                Log.warn("签名分支抖动 32 次未避开 branch==1，按当前 URL 签名（可能被服务端拒绝）");
+            }
+            headers.putAll(PureSign.sign(url, data, khronos));
         }
         headers.remove("accept-encoding");
         Safeguards.throttle().wait_();
@@ -259,16 +304,6 @@ public final class Client {
         try {
             j = Json.parseObject(text);
         } catch (Exception e) {
-            if (signed && Signer.signServers().isEmpty()) {
-                Safeguards.UpstreamResponseError err = new Safeguards.UpstreamResponseError(
-                        "该接口需要 X-Argus 签名。请启动 Java 签名服务并设置环境变量 "
-                        + "SIGN_SERVER=http://127.0.0.1:9099");
-                Map<String, Object> diag = Json.obj();
-                diag.put("http_status", res.status);
-                diag.put("body_bytes", text.getBytes(StandardCharsets.UTF_8).length);
-                err.diagnostic = diag;
-                throw err;
-            }
             Safeguards.UpstreamResponseError err =
                     new Safeguards.UpstreamResponseError("上游未返回 JSON");
             Map<String, Object> diag = Json.obj();
@@ -313,60 +348,18 @@ public final class Client {
 
     private static long lastRefresh = 0;
 
-    /** 从签名服务 /grab 刷新设备身份与 token（仅非托管模式）。 */
+    /**
+     * 刷新设备身份与登录态。
+     *
+     * 本地纯代码签名模式下本方法为空操作：设备身份由
+     * {@link Device#ensureDeviceId} 本机生成并持久化，token 来自
+     * content-config.json 的 session_headers，不存在需要从外部
+     * 签名服务抓取的状态。保留方法签名是为了让 api() 的重试流程
+     * 无需为此分支。
+     */
     public static synchronized void refreshSession() {
         if (System.currentTimeMillis() - lastRefresh < 20000) return; // 防抖
-        if (Signer.signServers().isEmpty()) return;
-        try {
-            Map<String, Object> data = Signer.grab();
-            if (data.get("error") != null) {
-                Log.warn("grab 失败: " + data.get("error"));
-                return;
-            }
-            Map<String, String> u = Http.parseQuery(
-                    queryOf(Json.optStr(data.get("url"), "")));
-            Set<String> deviceKeys = new LinkedHashSet<>(BASE_QUERY.keySet());
-            deviceKeys.addAll(Arrays.asList("iid", "device_id", "cdid",
-                    "klink_egdi", "channel", "update_version_code"));
-            for (Map.Entry<String, String> e : u.entrySet()) {
-                if (deviceKeys.contains(e.getKey()) && !e.getValue().isEmpty()) {
-                    BASE_QUERY.put(e.getKey(), e.getValue());
-                }
-            }
-            Map<String, Object> hs = Json.optObj(data.get("headers"));
-            if (hs != null) {
-                for (Map.Entry<String, Object> e : hs.entrySet()) {
-                    String kl = e.getKey().toLowerCase();
-                    if (Arrays.asList("cookie", "x-tt-token",
-                            "x-tt-store-region", "x-tt-store-region-src").contains(kl)
-                            && e.getValue() != null) {
-                        sessionHeadersCache().put(kl,
-                                String.valueOf(e.getValue()).replaceAll("^\\[|\\]$", ""));
-                    }
-                }
-            }
-            lastRefresh = System.currentTimeMillis();
-            String tok = sessionHeadersCache().getOrDefault("x-tt-token", "");
-            Log.info("登录态已刷新, token 长度=" + tok.length());
-        } catch (Exception e) {
-            Log.warn("刷新异常: " + e.getMessage());
-        }
-    }
-
-    private static final Map<String, String> HDR_CACHE = new LinkedHashMap<>();
-
-    private static Map<String, String> sessionHeadersCache() {
-        if (HDR_CACHE.isEmpty()) {
-            HDR_CACHE.putAll(sessionHeaders());
-            sessionHeaders().keySet().forEach(k -> HDR_CACHE.putIfAbsent(k, ""));
-        }
-        return HDR_CACHE;
-    }
-
-    /** 取 ?query 部分。 */
-    private static String queryOf(String url) {
-        int i = url.indexOf('?');
-        return i < 0 ? "" : url.substring(i + 1);
+        lastRefresh = System.currentTimeMillis();
     }
 
     // ==================== 数据解析 ====================
@@ -482,6 +475,70 @@ public final class Client {
         return out;
     }
 
+    /** 官网搜索结果转为与 {@link #parseSearchCell} 相同的条目结构（未知字段留空）。 */
+    private static List<Object> webSearchItems(List<Map<String, Object>> web) {
+        List<Object> out = new ArrayList<>();
+        for (Map<String, Object> w : web) {
+            Map<String, Object> row = Json.obj();
+            row.put("series_id", Json.optStr(w.get("series_id"), ""));
+            row.put("title", Json.optStr(w.get("series_title"), ""));
+            row.put("episode_cnt", Json.optLong(w.get("episode_cnt"), 0));
+            row.put("score", "");
+            row.put("play_cnt", 0);
+            row.put("hot", "");
+            row.put("copyright", "");
+            row.put("cover", Json.optStr(w.get("cover"), ""));
+            row.put("tags", new ArrayList<>());
+            row.put("abstract", strip(Json.optStr(w.get("series_intro"), ""), 60));
+            row.put("vid", "");
+            row.put("duration", 0);
+            row.put("horiz_cover", "");
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** 官网分集结果转为与 {@link #parseEpisodeDetail} 相同的结构（官网无简介/演员等字段）。 */
+    private static Map<String, Object> webEpisodesToDetail(Map<String, Object> web) {
+        String sid = Json.optStr(web.get("series_id"), "");
+        List<Object> eps = new ArrayList<>();
+        for (Object eObj : Json.optArr(web.get("episodes"))) {
+            Map<String, Object> e = Json.optObj(eObj);
+            if (e == null) continue;
+            String vid = Json.optStr(e.get("vid"), "");
+            rememberVid(vid, sid);
+            Map<String, Object> row = Json.obj();
+            row.put("index", Json.optLong(e.get("vid_index"), 0));
+            row.put("vid", vid);
+            row.put("title", Json.optStr(e.get("title"), ""));
+            row.put("duration", 0);
+            row.put("cover", Json.optStr(e.get("cover"), ""));
+            row.put("comment_count", 0);
+            row.put("digged_count", 0);
+            // 官网侧标注：该集是否有网页直链（限免集）。播放链路据此跳过无谓的官网探测
+            row.put("web_available", e.get("web_available"));
+            eps.add(row);
+        }
+        Map<String, Object> meta = Json.obj();
+        meta.put("series_id", sid);
+        String title = Json.optStr(web.get("series_title"), "");
+        meta.put("title", title.isEmpty() ? sid : title);
+        meta.put("abstract", "");
+        meta.put("episode_cnt", Json.optLong(web.get("total"), eps.size()));
+        meta.put("status", "");
+        meta.put("play_cnt", 0);
+        meta.put("followed_cnt", 0);
+        meta.put("create_time", 0);
+        meta.put("cover", Json.optStr(web.get("cover"), ""));
+        meta.put("category", new ArrayList<>());
+        meta.put("tags", new ArrayList<>());
+        meta.put("celebrities", new ArrayList<>());
+        Map<String, Object> out = Json.obj();
+        out.put("meta", meta);
+        out.put("episodes", eps);
+        return out;
+    }
+
     /** 剧集详情请求体（image_shrink 为抓包中的固定值）。 */
     private static final String IMAGE_SHRINK = "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjU0LCJzaHJpbmtfdHlwZSI6NH1d";
 
@@ -489,7 +546,6 @@ public final class Client {
         Map<String, Object> biz = Json.obj();
         biz.put("detail_page_version", 0);
         biz.put("disable_digg_stat", false);
-        biz.put("disable_video_relate_book", false);
         biz.put("image_shrink_datas_str", IMAGE_SHRINK);
         biz.put("need_all_video_definition", false);
         biz.put("need_mp4_align", false);
@@ -500,6 +556,7 @@ public final class Client {
 
         Map<String, Object> out = Json.obj();
         out.put("biz_param", biz);
+        out.put("dr_scene", "preload");
         out.put("series_id", String.valueOf(seriesId));
         return out;
     }
@@ -527,6 +584,7 @@ public final class Client {
             row.put("index", num(e, "vid_index"));
             Object v = e.get("vid");
             row.put("vid", v == null ? "" : String.valueOf(v));
+            rememberVid(v == null ? "" : String.valueOf(v), sid);
             row.put("title", title.length() > 30 ? title.substring(0, 30) : title);
             row.put("duration", num(e, "duration"));
             String cover = str(e, "episode_cover");
@@ -598,6 +656,10 @@ public final class Client {
     /**
      * 搜索的一页（供「加载更多」续页）。
      *
+     * 数据源优先级：官网搜索页（_ROUTER_DATA.searchList，服务端渲染、免签）
+     * -> App 签名搜索接口。App 搜索需要登录态，未登录时恒返回空，
+     * 因此官网命中即直接采用；官网无结果（含网络失败）才回落 API。
+     *
      * search 接口的 passback/search_id/offset 是上游游标，跨页必须原样回传，
      * 否则每次都从第 1 页重查。
      *
@@ -610,6 +672,25 @@ public final class Client {
         int limit = Math.max(1, Math.min(
                 maxItemsArg > 0 ? maxItemsArg : Log.envInt("HG_SEARCH_MAX_ITEMS", 20), 40));
         int skipN = Math.max(0, skip);
+
+        // ---- 官网搜索优先 ----
+        String ckWeb = Safeguards.cacheKey("websearch", query);
+        List<Object> webItems = null;
+        Object cachedWeb = Safeguards.cacheGet(ckWeb);
+        if (cachedWeb instanceof List) webItems = castList(cachedWeb);
+        if (webItems == null) {
+            List<Map<String, Object>> web = WebSource.search(query);
+            if (!web.isEmpty()) {
+                webItems = webSearchItems(web);
+                Safeguards.cacheSet(ckWeb, webItems, 600);
+            }
+        }
+        if (webItems != null && !webItems.isEmpty()) {
+            // 官网一次返回全部命中（约 10 条），没有后续页
+            return Page.slice(webItems, skipN, limit, false);
+        }
+
+        // ---- 回落 App 签名搜索 ----
         // 游标状态可复用：同一关键词的续页从头重抓上游，靠这里的缓存兜住重复请求
         String ck = Safeguards.cacheKey("searchp", query, limit, skipN);
         Object cached = Safeguards.cacheGet(ck);
@@ -712,21 +793,34 @@ public final class Client {
         return (List<Object>) o;
     }
 
-    /** 取单剧元信息 + 剧集列表（缓存 6 小时）。 */
+    /** 取单剧元信息 + 剧集列表（缓存 6 小时）。App 详情失败时回落官网分集页。 */
     public static Map<String, Object> getEpisodes(String seriesId) throws Exception {
         String sid = String.valueOf(seriesId);
         String ck = Safeguards.cacheKey("episodes", sid);
         Object cached = Safeguards.cacheGet(ck);
         if (cached != null) return Json.optObj(cached);
 
-        Map<String, Object> j = api("POST", "/novel/player/multi_video_detail/v1/",
-                episodesBody(sid), null, 3, true);
-        Map<String, Object> data = Json.optObj(j.get("data"));
-        Map<String, Object> vd = data == null ? null
-                : Json.optObj(Json.optObj(data.get(sid)).get("video_data"));
-        Map<String, Object> result = parseEpisodeDetail(sid, vd);
-        Safeguards.cacheSet(ck, result, 21600);
-        return result;
+        try {
+            Map<String, Object> j = api("POST", "/novel/player/multi_video_detail/preload/v1",
+                    episodesBody(sid), null, 3, true);
+            Map<String, Object> data = Json.optObj(j.get("data"));
+            Map<String, Object> vd = data == null ? null
+                    : Json.optObj(Json.optObj(data.get(sid)).get("video_data"));
+            Map<String, Object> result = parseEpisodeDetail(sid, vd);
+            Safeguards.cacheSet(ck, result, 21600);
+            return result;
+        } catch (Exception e) {
+            // App 详情失败（风控 / 网络 / 签名被拒）时回落官网分集页：
+            // 官网只有 vid 列表，没有简介、演员等富信息，但保证分集可见
+            Log.info("App 剧集详情失败，回落官网分集 (" + sid + ")：" + e.getMessage());
+            Map<String, Object> web = WebSource.episodes(sid);
+            if (web != null) {
+                Map<String, Object> result = webEpisodesToDetail(web);
+                Safeguards.cacheSet(ck, result, 21600);
+                return result;
+            }
+            throw e;
+        }
     }
 
     /** 批量取剧集元数据。 */
@@ -754,7 +848,7 @@ public final class Client {
         for (int i = 0; i < todo.size(); i += bs) {
             List<String> batch = todo.subList(i, Math.min(i + bs, todo.size()));
             try {
-                Map<String, Object> j = api("POST", "/novel/player/multi_video_detail/v1/",
+                Map<String, Object> j = api("POST", "/novel/player/multi_video_detail/preload/v1",
                         episodesBody(String.join(",", batch)), null, 3, true);
                 Map<String, Object> data = Json.optObj(j.get("data"));
                 for (String sid : batch) {
@@ -885,7 +979,6 @@ public final class Client {
         biz.put("detail_page_version", 0);
         biz.put("device_level", 3);
         biz.put("disable_digg_stat", false);
-        biz.put("disable_video_relate_book", false);
         biz.put("need_all_video_definition", true);
         biz.put("need_mp4_align", false);
         biz.put("use_os_player", false);
@@ -893,10 +986,11 @@ public final class Client {
         biz.put("video_platform", 1024);
 
         Map<String, Object> mixed = Json.obj();
-        mixed.put("1", new ArrayList<Object>(batch));
+        mixed.put("1004", new ArrayList<Object>(batch));
 
         Map<String, Object> out = Json.obj();
         out.put("biz_param", biz);
+        out.put("dr_scene", "preload");
         out.put("mixed_video_id_map", mixed);
         return out;
     }
@@ -954,7 +1048,7 @@ public final class Client {
         int bs = Math.max(1, Math.min(batchSizeArg > 0 ? batchSizeArg : 5, 5));
         for (int i = 0; i < todo.size(); i += bs) {
             List<String> batch = todo.subList(i, Math.min(i + bs, todo.size()));
-            Map<String, Object> j = api("POST", "/novel/player/multi_video_model/v1/",
+            Map<String, Object> j = api("POST", "/novel/player/multi_video_model/preload/v1",
                     videoModelBody(batch), null, 3, true);
             Map<String, Object> data = Json.optObj(j.get("data"));
             if (data == null) continue;

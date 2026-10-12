@@ -1,11 +1,12 @@
 package com.hongguo.api;
 
 import com.hongguo.api.core.Mp4;
+import com.hongguo.api.core.PureSign;
 import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.core.Spade;
 import com.hongguo.api.service.Client;
-import com.hongguo.api.service.Signer;
 import com.hongguo.api.service.Stream;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Json;
 
@@ -56,27 +57,6 @@ final class SelfTest {
     private void skip(String name, String reason) {
         skipped++;
         System.out.println("  ⊘ " + name + (reason == null || reason.isEmpty() ? "" : "  " + reason));
-    }
-
-    /** 任一签名后端探活通过即认为签名服务可用。 */
-    private static boolean anySignerReady() {
-        try {
-            for (Object o : Signer.health()) {
-                Map<String, Object> m = Json.optObj(o);
-                if (m != null && Json.optBool(m.get("ready"), false)) return true;
-            }
-        } catch (Exception ignored) {
-            // 探活失败按未就绪处理，不影响自检
-        }
-        return false;
-    }
-
-    /** 密钥未签发时的原因说明，便于判断是「离线」还是「服务异常」。 */
-    private static String bootstrapHint(boolean signerReady) {
-        if (signerReady) {
-            return "签名服务已就绪但未签发密钥，请启动一次服务以生成 apikeys.json";
-        }
-        return "未运行签名服务，且从未启动过 API 服务（密钥由启动流程签发）";
     }
 
     private static void section(String title) {
@@ -409,7 +389,7 @@ final class SelfTest {
 
     /** 11. 剧集解析：title 清洗（上游 title 实为简介）。 */
     private void episodeTitle() {
-        section("11. 剧集解析：title 清洗（上游 title 实为简介）");
+        section("12. 剧集解析：title 清洗（上游 title 实为简介）");
         String intro = "这是一段很长的本剧简介文字";
         Map<String, Object> vd = Json.obj();
         vd.put("series_intro", intro);
@@ -452,7 +432,7 @@ final class SelfTest {
 
     /** 12. 解码兼容性：默认不转码（直出 HEVC）。 */
     private void transcode() {
-        section("12. 解码兼容性：默认不转码（直出 HEVC）");
+        section("13. 解码兼容性：默认不转码（直出 HEVC）");
         check("ffmpeg 可用", Stream.ffmpegAvailable(), "");
         check("默认关闭转码", !Stream.transcodeEnabled(), "");
         if (Stream.transcodeEnabled()) {
@@ -463,38 +443,26 @@ final class SelfTest {
         }
     }
 
-    /** 13. 密钥管理。 */
+    /** 密钥管理。 */
     private void keyStore() {
-        section("13. 本地链路密钥");
+        section("14. 本地链路密钥");
         com.hongguo.api.core.KeyStore ks = new com.hongguo.api.core.KeyStore();
-        // 密钥文件首次由Server.ensureBootstrap() 自动签发，而该方法只在
-        // Launcher 正式启动流程里调用；--selftest 是独立轻量入口，不经Launcher，
-        // 因此「从未启动过服务」的干净环境下 apikeys.json 不存在。
-        //
-        // 这两项依赖运行态产物而非算法本身，故此时跳过（不计失败）：
-        // 未配置签名服务，或配置了但探活不通过，都说明处于离线/未启动状态，
-        // 密钥尚未被引导签发是预期行为，判失败只会让每次离线自检都挂两条。
-        boolean signerReady = !Signer.signServers().isEmpty()
-                && anySignerReady();
-        if (ks.countEnabled() == 0) {
-            skip("至少一把启用密钥", ks.countEnabled() == 0
-                    ? "尚未引导签发（" + bootstrapHint(signerReady) + "）" : "");
-        } else {
-            check("至少一把启用密钥", true, "" + ks.countEnabled());
-        }
+        // 与 Server.ensureBootstrap() 同一入口：干净环境（从未启动过服务）下
+        // apikeys.json 不存在。这里先自签一把，让下面两项断言确定执行，
+        // 结论不随「是否跑过服务」浮动——早期版本在这里按运行态跳过，
+        // 导致同一份代码在干净机上报 123、跑过服务后报 125。
+        ks.ensureBootstrap();
+        check("至少一把启用密钥", ks.countEnabled() >= 1, "" + ks.countEnabled());
         com.hongguo.api.core.KeyStore.Rec first = ks.firstEnabled();
-        if (first == null) {
-            skip("首把密钥格式为 hg_ 前缀", bootstrapHint(signerReady));
-        } else {
-            check("首把密钥格式为 hg_ 前缀", first.key.startsWith("hg_"), "");
-        }
+        check("首把密钥格式为 hg_ 前缀",
+                first != null && first.key.startsWith("hg_"), "");
         check("无效密钥被拒绝", !ks.isValid("hg_nonexistent"), "");
         check("空密钥被拒绝", !ks.isValid(""), "");
     }
 
-    /** 14. moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */
+    /** moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */
     private void moovLocator() {
-        section("14. moov 定位：尾部 moov 也能找到（流式解密前置）");
+        section("15. moov 定位：尾部 moov 也能找到（流式解密前置）");
         try {
             // 头部形态（faststart）：moov 应在 ftyp 之后立刻出现
             byte[] head = Mp4Fixture.buildMinimalEncryptedMp4();
@@ -583,7 +551,7 @@ final class SelfTest {
      * 同时校验「大文件不撑爆堆」：仅声明解密期间不读全文。
      */
     private void streamingDecrypt() {
-        section("15. 流式解密与整文件解密结果一致");
+        section("16. 流式解密与整文件解密结果一致");
         try {
             byte[] fixture = Mp4Fixture.buildMinimalEncryptedMp4();
             String keyHex = Mp4Fixture.fixtureKeyHex();
@@ -662,7 +630,7 @@ final class SelfTest {
      * 无任何淘汰，故此用例固化该行为。
      */
     private void cacheBounds() {
-        section("16. 缓存上限与过期清扫");
+        section("17. 缓存上限与过期清扫");
         try {
             // 条数上限：HG_MEM_CACHE_MAX 生效（用较小值快速验证）
             String savedMax = System.getProperty("HG_MEM_CACHE_MAX");
@@ -711,9 +679,16 @@ final class SelfTest {
      * 按最后修改时间保留最新 N 个（默认 30），最旧的删除。
      */
     private void streamCacheLimit() {
-        section("17. stream-cache 数量上限（超出按修改时间淘汰最旧）");
+        section("18. stream-cache 数量上限（超出按修改时间淘汰最旧）");
         Path tmp = null;
         try {
+            // 上限链路：runtime.cache.max_files（配置文件）经 Config.num 读取，
+            // 可被 HONGGUO_CACHE_MAX_FILES 覆盖。曾经这个键只存在于 config.json、
+            // 代码却只读环境变量（死键，改了不生效），这里把「键已登记」钉住，
+            // 配合下面的系统属性覆盖断言锁住整条链。
+            check("上限配置键已登记（runtime.cache.max_files）",
+                    Config.keys().contains("runtime.cache.max_files"), "");
+
             tmp = Files.createTempDirectory("hg-prune-");
             String savedDir = System.getProperty("HONGGUO_STREAM_CACHE");
             String savedMax = System.getProperty("HONGGUO_CACHE_MAX_FILES");
@@ -807,7 +782,7 @@ final class SelfTest {
      * 这里直接验证 Page.slice 的切片与 has_more 判据。
      */
     private void searchPageSlice() {
-        section("18. 搜索分页切片（skip 生效且 has_more 判据正确）");
+        section("19. 搜索分页切片（skip 生效且 has_more 判据正确）");
         java.util.List<Object> all = new java.util.ArrayList<>();
         for (int i = 0; i < 75; i++) all.add("item" + i);
 
@@ -883,6 +858,51 @@ final class SelfTest {
 
     // ==================== 入口 ====================
 
+    /**
+     * 15. 本地纯代码签名：六个头齐全、指定 khronos 原样生效、
+     * branch==1 可靠 _rticket 抖动规避（服务端不认 branch==1 变体）。
+     */
+    private void pureSign() {
+        section("11. 本地纯代码签名（PureSign）");
+        String base = "https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/"
+                + "?aid=8662&device_id=1234567890123456&version_code=71532"
+                + "&version_name=7.1.5.32&device_type=SM-N9860";
+        String url = base + "&_rticket=1700000000000";
+        byte[] body = "{\"biz_param\":{},\"mixed_video_id_map\":{\"1\":[\"7686715217652223038\"]}}"
+                .getBytes(StandardCharsets.UTF_8);
+
+        Map<String, String> h = PureSign.sign(url, body);
+        check("六个签名头齐全", h.size() == 6, "" + h.keySet());
+        for (String k : new String[]{"x-gorgon", "x-khronos", "x-ladon",
+                "x-argus", "x-helios", "x-medusa"}) {
+            check("含 " + k, h.get(k) != null && !h.get(k).isEmpty(), "");
+        }
+
+        // 指定 khronos 时 x-khronos 必须原样反映——Client 的 branch 抖动
+        // 依赖「判定与签名用同一个时间戳」，错位会导致规避失效
+        long khronos = 1700000000L;
+        Map<String, String> h2 = PureSign.sign(url, body, khronos);
+        check("x-khronos 与指定时间戳一致",
+                String.valueOf(khronos).equals(h2.get("x-khronos")), "" + h2.get("x-khronos"));
+
+        // GET（无 body）也要能签
+        Map<String, String> h3 = PureSign.sign(url, null);
+        check("无 body 也可签名", h3.size() == 6, "" + h3.keySet());
+
+        // branch 只可能取 0/1/2；且 32 个 _rticket 里必有一个 != 1
+        // （全为 1 的概率约 (1/3)^32，实际不可能出现）
+        int[] branches = new int[3];
+        int safe = 0;
+        for (int off = 0; off < 32; off++) {
+            int b = PureSign.branchOf(base + "&_rticket=" + (1700000000000L + off), body, khronos);
+            if (b >= 0 && b <= 2) branches[b]++;
+            if (b != 1) safe++;
+        }
+        check("branchOf 取值在 0/1/2", branches[0] + branches[1] + branches[2] == 32,
+                "b0=" + branches[0] + " b1=" + branches[1] + " b2=" + branches[2]);
+        check("32 个 _rticket 中可避开 branch==1", safe > 0, "safe=" + safe + "/32");
+    }
+
     static int run() {
         System.out.println("");
         System.out.println("  ============================================");
@@ -901,6 +921,7 @@ final class SelfTest {
             t.json();
             t.cachePaths();
             t.device();
+            t.pureSign();
             t.episodeTitle();
             t.transcode();
             t.keyStore();
@@ -921,7 +942,7 @@ final class SelfTest {
                 + "（device_id=" + Client.identity().deviceId + "）");
         System.out.println("  托管模式     " + Client.MANAGED);
         System.out.println("  列表免签     " + Client.SIGN_LIST);
-        System.out.println("  签名后端     " + Signer.signServers());
+        System.out.println("  签名方式     本地纯代码签名（PureSign）");
         System.out.println("  ffmpeg       " + Stream.ffmpegAvailable());
         System.out.println("  转码         " + Stream.transcodeEnabled()
                 + (Stream.transcodeEnabled() ? "（编码器 " + Stream.h264EncoderName() + "）" : ""));

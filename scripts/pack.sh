@@ -148,6 +148,7 @@ tar -C "$SRC" -cf - \
   --exclude='./java/build' \
   --exclude='./.git' \
   --exclude='./jre' \
+  --exclude='./signer' \
   --exclude='./.pack-cache' \
   --exclude='./dist' \
   --exclude='./screenshot' \
@@ -420,11 +421,6 @@ for out in "${BUILT[@]}"; do
            web/index.html \
            jre/release \
            平台说明.txt; do
-    check "$f"
-  done
-
-  # 签名资产（缺了无法播放）
-  for f in signer/runner/unidbg-sign.jar signer/capture/fq_oversea/libmetasec_ml.so; do
     check "$f"
   done
 

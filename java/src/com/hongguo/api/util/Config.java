@@ -47,15 +47,8 @@ public final class Config {
      */
     private static final Map<String, String> ENV_OF = Map.ofEntries(
             // ---- API 服务 ----
-            Map.entry("api.enabled", "HG_API_ENABLED"),
             Map.entry("api.host", "BIND_HOST"),
             Map.entry("api.port", "PORT"),
-            // ---- 签名服务 ----
-            Map.entry("signer.enabled", "HG_SIGN_ENABLED"),
-            Map.entry("signer.port", "SIGN_PORT"),
-            Map.entry("signer.server", "SIGN_SERVER"),
-            Map.entry("signer.jvm_xmx", "SIGN_JVM_XMX"),
-            Map.entry("signer.ready_timeout_ms", "READY_TIMEOUT_MS"),
             // ---- 启动器行为 ----
             Map.entry("launcher.open_browser", "HG_OPEN_BROWSER"),
             // HG_SKIP_JRE_INSTALL 刻意不在此列：它必须由 start.bat 在 JVM
@@ -63,7 +56,6 @@ public final class Config {
             // 环境变量。Java 侧不需要、也不应该知道它。
             // ---- 运行时调优 ----
             Map.entry("runtime.transcode", "HG_TRANSCODE"),
-            Map.entry("runtime.show_metasec", "HG_SHOW_METASEC"),
             Map.entry("runtime.data_dir", "HONGGUO_DATA_DIR"),
             Map.entry("runtime.device_id", "HG_DEVICE_ID"),
             Map.entry("runtime.cache.max_files", "HONGGUO_CACHE_MAX_FILES"),

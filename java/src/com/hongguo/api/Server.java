@@ -4,7 +4,6 @@ import com.hongguo.api.core.KeyStore;
 import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.service.Client;
 import com.hongguo.api.service.Res;
-import com.hongguo.api.service.Signer;
 import com.hongguo.api.service.Stream;
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Http;
@@ -103,9 +102,22 @@ public class Server {
         server.start();
         Log.info("红果短剧 Web API  http://" + host + ":" + port);
         Log.info("前端页面        http://" + host + ":" + port + "/ui");
-        Log.info("签名后端        " + (Signer.signServers().isEmpty()
-                ? "(未配置 SIGN_SERVER)" : String.join(", ", Signer.signServers())));
+        Log.info("签名方式        本地纯代码签名（PureSign，无需外部签名服务）");
         Log.info("上游 host       " + Client.HOST);
+    }
+
+    /**
+     * 签名后端状态（/health 与 /stats 用）。
+     *
+     * 保持原「数组 + ready 字段」的形状：早期版本这里列的是外部 unidbg
+     * 签名服务地址，现已改为进程内 PureSign 纯代码计算，恒就绪。
+     */
+    private static List<Object> signBackends() {
+        Map<String, Object> m = Json.obj();
+        m.put("url", "local");
+        m.put("ready", true);
+        m.put("probe", "pure-sign");
+        return new ArrayList<>(Arrays.asList(m));
     }
 
     // ==================== 主处理 ====================
@@ -271,7 +283,7 @@ public class Server {
             Map<String, Object> m = Json.obj();
             m.put("ok", true);
             m.put("uptime_s", (System.currentTimeMillis() - startTime) / 1000);
-            m.put("sign_backends", Signer.health());
+            m.put("sign_backends", signBackends());
             m.put("api_host", Client.HOST);
             m.put("ffmpeg", Stream.ffmpegAvailable());
             m.put("transcode", Stream.transcodeEnabled());
@@ -631,7 +643,7 @@ public class Server {
             m.put("risk", stats.risk);
             m.put("auth_fail", stats.authFail);
             m.put("cache_backend", "memory");
-            m.put("sign_backends", Signer.health());
+            m.put("sign_backends", signBackends());
             m.put("enabled_keys", keys.countEnabled());
             Res.json(ex, 200, m);
             return;

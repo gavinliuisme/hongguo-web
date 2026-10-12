@@ -106,8 +106,8 @@ public final class Log {
      * 读取配置项：优先系统属性，其次环境变量。
      *
      * 系统属性优先是为了让同进程内的编排结果能直接下发给各模块 ——
-     * Launcher 用 System.setProperty("SIGN_SERVER", ...) 把刚拉起的签名服务
-     * 地址告诉 API 服务，而不需要去改进程环境变量（JVM 环境下改env 不可行）。
+     * 例如启动阶段计算出的值可以通过 System.setProperty 传递，
+     * 而不需要去改进程环境变量（JVM 环境下改env 不可行）。
      * 空字符串视为未设置（对齐 JS 里 process.env.X || default 的语义）。
      */
     public static String env(String name, String def) {

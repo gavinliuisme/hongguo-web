@@ -112,6 +112,22 @@ public final class Stream {
     /** 取该集指定清晰度的轨道信息。 */
     @SuppressWarnings("unchecked")
     public static VideoTrack videoTrack(String vid, String quality) throws Exception {
+        // 官网明文直链优先（限免集）：免 spade 解密、免 ffmpeg remux，拿到即可直下。
+        // 前提是知道 vid 所属剧集（/stream?vid= 只带 vid，剧 id 由 Client 的反查表提供）；
+        // 非限免集的官网页面服务端返回 404，playUrl 返回 null，自然回落 App video_model。
+        String sid = Client.seriesIdOfVid(String.valueOf(vid));
+        if (sid != null) {
+            Map<String, Object> web = WebSource.playUrl(sid, String.valueOf(vid));
+            if (web != null) {
+                VideoTrack wt = new VideoTrack();
+                wt.url = Json.optStr(web.get("url"), "");
+                wt.encrypt = false;
+                wt.definition = "web";
+                wt.size = 0;
+                return wt;
+            }
+        }
+
         Map<String, Object> tracks =
                 Client.getVideoTracks(new ArrayList<>(Arrays.asList(vid)), false, 5);
         Object listObj = tracks.get(String.valueOf(vid));
@@ -589,9 +605,6 @@ public final class Stream {
     /** 默认保留的缓存文件数上限。 */
     public static final int CACHE_MAX_FILES = 30;
 
-    /** 上限配置项：设为 0 或负数表示不限制。 */
-    private static final String CACHE_MAX_ENV = "HONGGUO_CACHE_MAX_FILES";
-
     /**
      * 清理缓存目录，只保留最新的 {@link #CACHE_MAX_FILES} 个文件。
      *
@@ -602,8 +615,8 @@ public final class Stream {
      * - {@code *.part}：下载临时文件，仍在被写；
      * - {@code *.enc}：密文临时文件，解密中且 finally 还要用。
      *
-     * 上限由 {@code HONGGUO_CACHE_MAX_FILES} 控制，默认 {@value #CACHE_MAX_FILES}；
-     * 设为 0 或负数即关闭清理（不限数量）。
+     * 上限取自 {@code runtime.cache.max_files}（配置文件，默认 {@value #CACHE_MAX_FILES}），
+     * 可被环境变量 {@code HONGGUO_CACHE_MAX_FILES} 覆盖；设为 0 或负数即关闭清理（不限数量）。
      *
      * 放在decrypt 落盘**之后**调用：此时 raw/play 才是成品，不会误删半成品。
      * 异常全程吞掉——清理失败不该让播放失败；只有失败时才记日志，
@@ -612,7 +625,7 @@ public final class Stream {
      * @return 被删除的文件数
      */
     public static int pruneCache() {
-        return pruneCache(Log.envInt(CACHE_MAX_ENV, CACHE_MAX_FILES));
+        return pruneCache(Config.num("runtime.cache.max_files", CACHE_MAX_FILES));
     }
 
     /** 清理缓存目录，limit<=0 时不做任何事。 */

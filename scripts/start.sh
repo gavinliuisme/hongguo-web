@@ -17,8 +17,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 JAR="java/dist/hongguo-api.jar"
 
 # ---------- 找 JRE ----------
-# 顺序与 Java 侧 Launcher.findJava 一致：自带 jre/ > JAVA_HOME > PATH。
-# 自带副本优先，是为了避免系统上的旧 JDK(8/11) 抢先被选中而搞坏 unidbg。
+# 顺序：自带 jre/ > JAVA_HOME > PATH。
+# 自带副本优先，是为了避免系统上的旧 JDK(8/11) 抢先被选中。
 find_java() {
   local exe="java" d
   [ -x "jre/bin/$exe" ] && { echo "jre/bin/$exe"; return; }
@@ -38,8 +38,8 @@ if [ -z "$JAVA_BIN" ]; then
   echo
   echo "  发行包自带对应平台的 JRE，正常不会走到这里；"
   echo "  若你是从源码运行，请任选一种方式："
-  echo "    1) 安装 Temurin 17+：https://adoptium.net/   （推荐）"
-  echo "    2) 把任意 JRE 17+ 解压到项目的 jre/ 目录（需要里面有 bin/java）"
+  echo "    1) 安装 Temurin 20+：https://adoptium.net/   （推荐）"
+  echo "    2) 把任意 JRE 20+ 解压到项目的 jre/ 目录（需要里面有 bin/java）"
   echo
   exit 1
 fi
@@ -52,7 +52,7 @@ if [ ! -f "$JAR" ]; then
   echo "  缺少 $PWD/$JAR"
   echo
   echo "  发行包自带预编译 jar，所以这里缺失通常是解压不完整。"
-  echo "  如果你是从源码构建，请安装 JDK 17+ 后执行："
+  echo "  如果你是从源码构建，请安装 JDK 20+ 后执行："
   echo "      bash scripts/build-java.sh"
   echo
   exit 1

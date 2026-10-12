@@ -37,10 +37,9 @@
 set "JAR=java\dist\hongguo-api.jar"
 
 @rem --- locate a JRE -------------------------------------------------
-@rem The order mirrors Java's Launcher.findJava: the bundled jre\ wins
-@rem over JAVA_HOME, which wins over PATH. Preferring the bundled copy
-@rem keeps a stale system JDK (8/11) from being picked first, which
-@rem would break unidbg.
+@rem The order mirrors the Java side: the bundled jre\ wins over
+@rem JAVA_HOME, which wins over PATH. Preferring the bundled copy
+@rem keeps a stale system JDK (8/11) from being picked first.
 set "JAVA_BIN="
 if exist "jre\bin\java.exe" set "JAVA_BIN=%CD%\jre\bin\java.exe"
 if not defined JAVA_BIN for /d %%d in ("jre\*") do @if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
@@ -91,8 +90,8 @@ echo.
 echo   Release packages include a matching JRE, so this normally means you
 echo   are running from a source checkout. Either:
 echo.
-echo     1) Install Temurin 17+ from https://adoptium.net/  ^(recommended^)
-echo     2) Unpack any JRE 17+ into the jre\ folder   ^(needs bin\java.exe^)
+echo     1) Install Temurin 20+ from https://adoptium.net/  ^(recommended^)
+echo     2) Unpack any JRE 20+ into the jre\ folder   ^(needs bin\java.exe^)
 echo.
 echo   Then run this script again.
 echo.
@@ -106,7 +105,7 @@ echo   Missing %CD%\%JAR%
 echo.
 echo   The release package ships a prebuilt jar, so it is missing here
 echo   because the package was extracted incompletely. If you are
-echo   building from source, install JDK 17+ and run:
+echo   building from source, install JDK 20+ and run:
 echo       scripts\build-java.bat
 echo.
 pause

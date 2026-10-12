@@ -17,7 +17,7 @@ echo "    构建 hongguo-api.jar"
 echo "  ============================================"
 echo ""
 
-# ---------- 探测 JDK 17+ ----------
+# ---------- 探测 JDK 20+ ----------
 if ! command -v javac >/dev/null 2>&1; then
   # 优先用项目自带的 JRE（含解压多一层：jre/<目录名>/bin/javac）
   for cand in "$ROOT/jre/bin/javac" "$ROOT/jre"/*/bin/javac /usr/lib/jvm/*/bin/javac; do
@@ -31,7 +31,7 @@ if [ -z "${JAVAC:-}" ]; then
   echo "  [错误] 未找到 javac，本机无法编译 Java 源码。"
   echo "         说明：发行包已内置 java/dist/hongguo-api.jar，正常启动"
   echo "         不会走到这里 —— 仅在 JAR 缺失或修改源码后需要编译，"
-  echo "         此时请安装 JDK 17+：https://adoptium.net/"
+  echo "         此时请安装 JDK 20+：https://adoptium.net/"
   exit 1
 fi
 
