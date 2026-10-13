@@ -5,7 +5,6 @@ import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.service.Client;
 import com.hongguo.api.service.Res;
 import com.hongguo.api.service.Stream;
-import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Http;
 import com.hongguo.api.util.Json;
 import com.hongguo.api.util.Config;
@@ -48,6 +47,8 @@ public class Server {
 
     private final KeyStore keys = new KeyStore();
     private final String adminToken;
+    /** 管理口令是否为本次启动新生成（文件里原本没有，或环境变量未设置）。 */
+    private final boolean adminTokenFresh;
     private final int ratePerMin;
     private final Path webDir;
 
@@ -68,21 +69,28 @@ public class Server {
             "/", "/ui", "/img", "/favicon.ico", "/health", "/api-key"));
 
     public Server() {
+        // 管理口令优先级：环境变量 > apikeys.json 的 admin_token > 首次生成并写回文件。
+        // 不设环境变量时以文件为准，重启后沿用同一个值（早期版本每次启动
+        // 随机生成，重启即失效，脚本化的管理调用无法稳定使用）。
         String tok = Log.env("ADMIN_TOKEN", null);
-        this.adminToken = (tok != null) ? tok : randomHex(32);
+        boolean fresh = false;
+        if (tok != null && !tok.isEmpty()) {
+            this.adminToken = tok;
+        } else {
+            this.adminToken = keys.ensureAdminToken();
+            fresh = keys.adminTokenFresh();
+        }
+        this.adminTokenFresh = fresh;
         this.ratePerMin = Log.envInt("RATE_PER_MIN", 120);
 
         String wd = Log.env("WEB_DIR", null);
         this.webDir = (wd != null) ? Paths.get(wd) : Paths.get("web");
     }
 
-    private static String randomHex(int bytes) {
-        byte[] b = new byte[bytes];
-        new java.security.SecureRandom().nextBytes(b);
-        return Crypto.hex(b);
-    }
-
     public String adminToken() { return adminToken; }
+
+    /** 本次启动的管理口令是否为新生成（控制台据此决定是否提示）。 */
+    public boolean adminTokenFresh() { return adminTokenFresh; }
 
     /**
      * 首次启动自动签发一把本地链路密钥，避免用户手动配置。
@@ -102,8 +110,6 @@ public class Server {
         server.start();
         Log.info("红果短剧 Web API  http://" + host + ":" + port);
         Log.info("前端页面        http://" + host + ":" + port + "/ui");
-        Log.info("签名方式        本地纯代码签名（PureSign，无需外部签名服务）");
-        Log.info("上游 host       " + Client.HOST);
     }
 
     /**

@@ -458,6 +458,11 @@ final class SelfTest {
                 first != null && first.key.startsWith("hg_"), "");
         check("无效密钥被拒绝", !ks.isValid("hg_nonexistent"), "");
         check("空密钥被拒绝", !ks.isValid(""), "");
+        // 管理口令：apikeys.json 里没有则生成并写回，重读必须拿到同一个值
+        String at1 = ks.ensureAdminToken();
+        check("管理口令已生成（64 位 hex）", at1.length() == 64, "len=" + at1.length());
+        com.hongguo.api.core.KeyStore ks2 = new com.hongguo.api.core.KeyStore();
+        check("管理口令持久化到 apikeys.json", at1.equals(ks2.ensureAdminToken()), "");
     }
 
     /** moov 定位：尾部 moov（非 faststart）必须能被正确找到。 */

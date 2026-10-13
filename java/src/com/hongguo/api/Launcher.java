@@ -3,11 +3,8 @@ package com.hongguo.api;
 import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
-import java.io.File;
-import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -59,9 +56,12 @@ public final class Launcher {
         for (String a : args) {
             if (a.equals("--stop")) {
                 boolean killed = stopRunning();
-                // 只在真的有实例被杀时才查端口：没找到进程的情况下
-                // 端口必然是空的，查了也只是噪声。
-                if (killed) reportPorts(Config.num("api.port", 8000));
+                // 无论是否定位到进程都要查端口：「没找到进程」并不等于
+                // 「端口是空的」——Windows 上以管理员权限启动的服务，
+                // 普通权限的 --stop 读不到它的命令行，匹配会落空，
+                // 而端口仍在监听。此时必须如实告知，否则用户会以为
+                // 停止成功，留下一个占着端口的隐形实例。
+                reportPorts(Config.num("api.port", 8000), killed);
                 // 两种结果都算成功：「停掉了」和「本来就没在跑」都是
                 // 幂等停止的正常结局。返回非 0 会让stop.bat 打出
                 // "Service exited with code 1"，把一次正常操作报成失败。
@@ -79,12 +79,14 @@ public final class Launcher {
         Server server = new Server();
         String boot = server.ensureBootstrap();
         if (boot != null) Log.info("已签发本地链路密钥   " + boot);
-        Log.info("管理口令(ADMIN_TOKEN) " + server.adminToken());
+        // 管理口令只在首次自动生成时输出：此时已写入 apikeys.json，
+        // 重启沿用同一口令，不再重复打扰；环境变量显式设置时同样不输出。
+        if (server.adminTokenFresh()) {
+            Log.info("管理口令(ADMIN_TOKEN) " + server.adminToken()
+                    + "（已写入 server/data/apikeys.json，重启沿用）");
+        }
 
         server.start(bindHost, apiPort);
-        // 不再重复打印服务信息：Server.start() 已输出地址、签名方式与上游 host，
-        // 这里只补一行停止提示，避免同一批信息在控制台出现两遍。
-        Log.info("按 Ctrl-C 停止");
 
         // 浏览器交给 Java 侧开：launcher.open_browser 是配置项，
         // 启动脚本只负责把 JVM 拉起来，不参与任何编排。
@@ -93,7 +95,8 @@ public final class Launcher {
         }
 
         // 阻塞主线程：HttpServer 的工作线程是非 daemon，main 返回后 JVM
-        // 也不会退出，但显式等待能让「按 Ctrl-C 停止」的语义保持清晰。
+        // 也不会退出，但显式等待能确保 Ctrl-C / SIGTERM 走 JVM 默认退出
+        // 流程，进程状态由 /health 与浏览器体现，控制台不补状态行。
         awaitShutdown();
     }
 
@@ -220,10 +223,10 @@ public final class Launcher {
      *
      * 没有子进程需要收编（签名与解密都在本进程内），
      * 这里只把主线程挂住，让 Ctrl-C / SIGTERM 走 JVM 默认退出流程。
+     * 控制台不额外打印状态行：服务是否在跑，看浏览器或 /health 即可，
+     * 末尾再补一行提示只是噪声。
      */
     private static void awaitShutdown() {
-        Log.info("");
-        Log.info("服务运行中，按 Ctrl-C 停止...");
         try {
             new CountDownLatch(1).await();
         } catch (InterruptedException e) {
@@ -239,12 +242,10 @@ public final class Launcher {
      * 都正常。需要中文标识时可看浏览器标题栏或日志文件。
      */
     private static void banner() {
-        Log.info("");
         Log.info("  Hongguo Short Drama - Web Launcher (Java Edition)");
         Log.info("  " + System.getProperty("os.name") + " "
                 + System.getProperty("os.arch") + "  Java "
                 + System.getProperty("java.version"));
-        Log.info("");
     }
 
     /**
@@ -311,8 +312,11 @@ public final class Launcher {
                     // SIGTERM 打断，调用方拿到 128+15 的退出码，
                     // 看起来像失败，其实只是撞车。
                     if (cmd.contains("--stop")) return;
+                    // 大小写不敏感：Windows 文件名与命令行均不区分大小写，
+                    // 而用户启动服务时用的路径大小写不受我们控制。
+                    String lower = cmd.toLowerCase();
                     for (String n : names) {
-                        if (cmd.contains(n)) { targets.add(h); return; }
+                        if (lower.contains(n.toLowerCase())) { targets.add(h); return; }
                     }
                 });
 
@@ -346,16 +350,28 @@ public final class Launcher {
      * 才是 {@code java.exe}。直接拿返回值比"java"会永远失配，
      * 结果是真实例一个也找不到。
      *
+     * <p><b>command() 为空时回退到 commandLine() 的首个 token</b>：
+     * Windows 上对高权限或异会话进程，{@code command()} 偶有返回空
+     * 的情况（此时命令行往往仍可读）。只认 command() 会把这类
+     * 真实实例全部漏掉，表现为"没有找到正在运行的 API 进程"
+     * 而服务其实还在跑。
+     *
      * <p>读不到名字时返回 false（宁可不杀，不误杀）。
      */
     private static boolean isRuntimeProcess(ProcessHandle h) {
         String exe;
         try {
-            // command() 是可执行文件路径（或基名），比 commandLine() 短得多，
-            // 且不受"命令行是否可读"的权限限制
             exe = h.info().command().orElse("");
         } catch (Throwable t) {
-            return false;
+            exe = "";
+        }
+        if (exe.isEmpty()) {
+            String cmd = commandLineOf(h);
+            if (cmd != null && !cmd.trim().isEmpty()) {
+                String first = cmd.trim();
+                int sp = first.indexOf(' ');
+                exe = sp > 0 ? first.substring(0, sp) : first;
+            }
         }
         int cut = Math.max(exe.lastIndexOf('/'), exe.lastIndexOf('\\'));
         if (cut >= 0) exe = exe.substring(cut + 1);
@@ -409,45 +425,57 @@ public final class Launcher {
     }
 
     /**
-     * 停掉在跑的实例后，顺带报告配置里的端口是否仍被占用。
+     * 报告配置里的端口是否仍被占用。
      *
-     * <p>停掉之后仍占用通常意味着有另一个实例在跑，或者杀进程需要
-     * 管理员权限 —— 值得说一句，否则用户会以为脚本没生效。
+     * <p>两种调用场景，措辞完全不同：
+     * <ul>
+     *   <li>{@code killed=true}：真的停掉了实例，端口仍占用通常意味着
+     *       有另一个实例在跑，或杀进程需要管理员权限；</li>
+     *   <li>{@code killed=false}：没能定位到进程，端口却还在听 ——
+     *       典型原因是服务以管理员权限启动（当前权限不足，读不到它的
+     *       命令行），或从本项目的另一份拷贝启动。此时必须点破，
+     *       否则用户会以为停止成功，留下一个占着端口的隐形实例。</li>
+     * </ul>
      */
-    private static void reportPorts(int apiPort) {
-        if (netstatBusy(apiPort)) {
+    private static void reportPorts(int apiPort, boolean killed) {
+        if (!portBusy(apiPort)) return;
+        if (killed) {
             Log.warn("端口 " + apiPort + " 仍被占用。若有其他实例在跑属正常；"
                     + "否则可尝试以管理员身份运行，或查看：netstat -ano | findstr " + apiPort);
+        } else {
+            Log.warn("端口 " + apiPort + " 仍在监听，但未能定位到进程。");
+            Log.warn("  常见原因：服务以管理员权限启动（当前权限不足），"
+                    + "或从本项目的另一份拷贝启动。");
+            Log.warn("  可手动结束：netstat -ano | findstr " + apiPort
+                    + " 查到 PID 后执行 taskkill /PID <pid> /F，"
+                    + "或在任务管理器结束对应的 java.exe。");
         }
     }
 
-    /** 该端口是否处于 LISTENING。 */
-    private static boolean netstatBusy(int port) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("netstat", "-ano");
-            pb.redirectErrorStream(true);
-            Process p = pb.start();
-            String out = new String(readAll(p.getInputStream()), StandardCharsets.UTF_8);
-            p.waitFor();
-            for (String line : out.split("\r?\n")) {
-                if (line.contains("LISTENING")
-                        && line.matches(".*:\\s*" + port + "\\s+\\d+\\s+.*")) {
-                    return true;
-                }
+    /**
+     * 端口是否仍在接受连接。
+     *
+     * <p>用 TCP 连接探测，而不是解析 netstat：后者的输出格式三个平台
+     * 各不一样（Windows 是 LISTENING，Linux 是 LISTEN，macOS 又是另一套），
+     * 照某一种写正则必然在别的平台上失灵。一次 connect 在所有平台
+     * 语义一致：连得上，就是有东西在听。
+     *
+     * <p>连不上时视为未占用：防火墙拦截、绑定在别的网卡上都会走到这里，
+     * 宁可漏报也不误报 —— 停止流程本身已经结束，这里只是补充信息。
+     */
+    private static boolean portBusy(int port) {
+        String host = Config.str("api.host", "127.0.0.1");
+        boolean wildcard = host.isEmpty() || host.equals("0.0.0.0") || host.equals("::");
+        String[] candidates = wildcard ? new String[] {"127.0.0.1"}
+                                       : new String[] {host, "127.0.0.1"};
+        for (String h : candidates) {
+            try (java.net.Socket s = new java.net.Socket()) {
+                s.connect(new java.net.InetSocketAddress(h, port), 1000);
+                return true;
+            } catch (Exception ignored) {
+                // 换下一个候选地址
             }
-        } catch (Exception ignored) {
-            // netstat 不可用时不阻断停止流程
         }
         return false;
-    }
-
-    // ==================== 杂项 ====================
-
-    private static byte[] readAll(java.io.InputStream in) throws IOException {
-        java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-        return bos.toByteArray();
     }
 }
