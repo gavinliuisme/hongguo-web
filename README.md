@@ -259,6 +259,11 @@ ffmpeg -version # 可选
 > 解密产物落在 `server/data/stream-cache/<vid>_<清晰度>.play.mp4`。
 > 注意扩展名是 `.play.mp4` 而非 `.mp4`（ffmpeg remux 去掉 CENC 信令后会改名），
 > 手写脚本判断缓存是否存在时不要只找 `.mp4`。
+>
+> **未安装 ffmpeg 时** remux 步骤跳过，解密产物为 `<vid>_<清晰度>.raw.mp4` ——
+> 文件内容**已是解密后的明文**（仅未剥离 CENC 信令），可直接播放；缓存命中判定
+> 同时覆盖 `.play.mp4` / `.mp4` / `.raw.mp4` 三个变体。日后装上 ffmpeg，
+> 旧的 `.raw.mp4` 会在下次命中缓存时自动补做 remux，升级为 `.play.mp4`。
 
 ### 列表分页与「加载更多」
 
