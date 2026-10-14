@@ -118,25 +118,6 @@ public final class Client {
 
     public static Device.Identity identity() { return IDENTITY; }
 
-    /**
-     * vid -> series_id 反查表：播放链路据此判断某集能否走官网明文直链
-     * （/stream?vid= 只带 vid，不带剧 id，而官网直链页需要两者）。
-     */
-    private static final Map<String, String> SID_OF_VID = new ConcurrentHashMap<>();
-
-    /** 记录 vid 所属剧集。 */
-    static void rememberVid(String vid, String sid) {
-        if (vid == null || vid.isEmpty() || sid == null || sid.isEmpty()) return;
-        // 有界：看过的剧多了之后整体清空重建，避免长跑进程无限增长
-        if (SID_OF_VID.size() > 8192) SID_OF_VID.clear();
-        SID_OF_VID.put(vid, sid);
-    }
-
-    /** 反查 vid 所属剧集；未知返回 null。 */
-    public static String seriesIdOfVid(String vid) {
-        return vid == null ? null : SID_OF_VID.get(vid);
-    }
-
     // ==================== 榜单 / 体裁常量 ====================
 
     public static final Map<String, String> RANK_BOARDS = new LinkedHashMap<>();
@@ -505,7 +486,6 @@ public final class Client {
             Map<String, Object> e = Json.optObj(eObj);
             if (e == null) continue;
             String vid = Json.optStr(e.get("vid"), "");
-            rememberVid(vid, sid);
             Map<String, Object> row = Json.obj();
             row.put("index", Json.optLong(e.get("vid_index"), 0));
             row.put("vid", vid);
@@ -514,7 +494,8 @@ public final class Client {
             row.put("cover", Json.optStr(e.get("cover"), ""));
             row.put("comment_count", 0);
             row.put("digged_count", 0);
-            // 官网侧标注：该集是否有网页直链（限免集）。播放链路据此跳过无谓的官网探测
+            // 官网侧标注：该集是否落在网页版限免集数内（仅作展示，
+            // 播放取址已统一走 AppSource，不再据此探测官网直链）
             row.put("web_available", e.get("web_available"));
             eps.add(row);
         }
@@ -583,7 +564,6 @@ public final class Client {
             row.put("index", num(e, "vid_index"));
             Object v = e.get("vid");
             row.put("vid", v == null ? "" : String.valueOf(v));
-            rememberVid(v == null ? "" : String.valueOf(v), sid);
             row.put("title", title.length() > 30 ? title.substring(0, 30) : title);
             row.put("duration", num(e, "duration"));
             String cover = str(e, "episode_cover");

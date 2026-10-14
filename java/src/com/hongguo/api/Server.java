@@ -546,7 +546,7 @@ public class Server {
             Map<String, Object> m = Json.obj();
             m.put("series_id", sid);
             m.put("title", Json.optStr(Json.optObj(meta.get("meta")).get("title"), ""));
-            m.put("note", "encrypted_url：限免集为官网明文直链，其余为 CENC 密文直链；"
+            m.put("note", "encrypted_url 为上游直链（加密集为 CENC 密文）；"
                     + "可播放用 stream_url（服务端纯离线解密）");
             m.put("episodes", out);
             Res.json(ex, 200, m);
@@ -693,8 +693,7 @@ public class Server {
     /**
      * 单集取直链信息（url / size / definition / url_is_http）。
      *
-     * 统一走 {@link Stream#videoTrack}：官网明文直链（限免集）优先，
-     * 其余走 AppSource 的 b 域名 multi_video_model/v1 链路。
+     * 统一走 {@link Stream#videoTrack}（AppSource 的 b 域名 multi_video_model/v1 链路）。
      * 取不到时返回空 map（调用方按「无直链」处理），异常只记日志不外抛，
      * 避免一个坏集带垮整个 /play 列表。
      */

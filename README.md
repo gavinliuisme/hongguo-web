@@ -312,7 +312,7 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/browse?genre=&theme=&sort=&days=` | 组合浏览 |
 | GET | `/episodes?series_id=` | 剧集列表 |
 | POST | `/metrics/batch` | 批量上报播放进度 |
-| GET | `/play?series_id=&ep=1-10` | 取各集直链（`encrypted_url`：限免集为官网明文，其余为 CENC 密文） |
+| GET | `/play?series_id=&ep=1-10` | 取各集直链（`encrypted_url` 为上游直链，可播放用 `stream_url`） |
 | GET | `/video_url?vid=` | 单集取直链 |
 | GET | `/stream?vid=&quality=1080p` | **可播放**（服务端离线解密，支持 Range） |
 | GET | `/stream?series_id=&ep=1` | 同上，按集号 |
@@ -480,7 +480,7 @@ hongguo-web/
 │   │   │   ├── KeyStore.java     密钥管理
 │   │   │   └── Safeguards.java   风控 + 缓存 + 节流
 │   │   ├── service/
-│   │   │   ├── WebSource.java    官网数据源（搜索/分集/明文直链）
+│   │   │   ├── WebSource.java    官网数据源（搜索/分集列表）
 │   │   │   ├── AppSource.java    App 取址链路（b 域名 v1 + fallback_api）
 │   │   │   ├── Client.java       上游 API 客户端（签名 + 六请求头）
 │   │   │   ├── Stream.java       下载 + 解密 + remux

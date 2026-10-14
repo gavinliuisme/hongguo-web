@@ -26,8 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 下载 + 纯离线解密流水线。
  * 移植自 server/src/stream.js。
  *
- * 流程：videoTrack 取 spade_a 与直链（官网明文直链 -> AppSource 取址，
- *      见 videoTrack 注释）
+ * 流程：videoTrack 取 spade_a 与直链（AppSource 取址，见 videoTrack 注释）
  *      -> 下载密文 mp4
  *      -> spade 解包 content key（纯字节变换）
  *      -> AES-128-CTR 全轨解密（视频+音频各用自身逐样本 IV）
@@ -81,26 +80,11 @@ public final class Stream {
 
     /** 取该集指定清晰度的轨道信息。 */
     public static VideoTrack videoTrack(String vid, String quality) throws Exception {
-        // 官网明文直链优先（限免集）：免 spade 解密、免 ffmpeg remux，拿到即可直下。
-        // 前提是知道 vid 所属剧集（/stream?vid= 只带 vid，剧 id 由 Client 的反查表提供）；
-        // 非限免集的官网页面服务端返回 404，playUrl 返回 null，自然改走 App 取址。
-        String sid = Client.seriesIdOfVid(String.valueOf(vid));
-        if (sid != null) {
-            Map<String, Object> web = WebSource.playUrl(sid, String.valueOf(vid));
-            if (web != null) {
-                VideoTrack wt = new VideoTrack();
-                wt.url = Json.optStr(web.get("url"), "");
-                wt.encrypt = false;
-                wt.definition = "web";
-                wt.size = 0;
-                return wt;
-            }
-        }
-
-        // App 取址：b 域名 multi_video_model/v1 + fallback_api 二次请求。
-        // 上游 a 域名 preload/v1 已对部分分集（后集高发）不再返回 video_model，
-        // 故分集的直链只走这一条路；拿不到时返回 null，
-        // 由 ensureDecrypted 报「无直链 / video_model」。
+        // 播放直链统一走 App 取址：b 域名 multi_video_model/v1 + fallback_api 二次请求。
+        // 上游 a 域名 preload/v1 已对部分分集（后集高发）不再返回 video_model；
+        // 官网播放页曾是明文直链来源，但改版后 SSR 不再输出 main_url，
+        // 仅剩 360p 预览 contentUrl（付费集下载即 404），故不再走官网。
+        // 拿不到时返回 null，由 ensureDecrypted 报「无直链 / video_model」。
         return AppSource.fetch(String.valueOf(vid), quality);
     }
 

@@ -18,10 +18,11 @@ import java.util.regex.Pattern;
  * 红果短剧官网 hongguoduanju.com 的页面是服务端渲染的：
  * - /search/{keyword}      内嵌 _ROUTER_DATA.searchList（搜索结果）
  * - /player/{series_id}    内嵌 vid_list（完整分集 vid 列表）与 series_name
- * - /player/{sid}/{vid}    内嵌 main_url（明文 MP4 直链，无需 spade_a 解密）
  *
- * 网页版仅前 accessible_episode_cnt 集可免费播放，其余集数 main_url 缺失，
- * 由调用方回落到 App 签名接口（PureSign + multi_video_model）。
+ * 播放直链历史上也在 /player/{sid}/{vid} 页内（main_url，明文 MP4），
+ * 但官网改版后 SSR 已不再输出该字段，仅剩 360p 预览 contentUrl
+ * （付费集下载即 404），故播放取址不再走官网，统一由 AppSource 负责
+ * （见 Stream.videoTrack）。官网数据现仅用于搜索与分集列表。
  *
  * 移植参考：jackotom/hongguo-drama src/native/hongguo.js（GPL-3.0）。
  */
@@ -128,46 +129,6 @@ public final class WebSource {
             return out;
         } catch (Exception e) {
             Log.warn("官网分集失败(" + sid + "): " + e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 官网单集播放直链（明文 MP4，免签免解密）。
-     *
-     * 正确页面格式为 /player/{series_id}/{vid}；series_id 缺失时退化为 /player/_/{vid}。
-     * 网页版仅前若干集可免费播放，非限免集的页面服务端返回 404——
-     * 这属于预期回落路径，不记警告日志。
-     *
-     * @param seriesId 剧 id
-     * @param vid      分集 vid
-     * @return {url, source:"web"}；网页版没有该集直链（如非限免集）返回 null
-     */
-    public static Map<String, Object> playUrl(String seriesId, String vid) {
-        String v = vid == null ? "" : vid.trim();
-        if (v.isEmpty()) return null;
-        String sid = seriesId == null ? "" : seriesId.trim();
-        String url = SITE_ORIGIN + "/player/"
-                + Http.urlencode(sid.isEmpty() ? "_" : sid) + "/" + Http.urlencode(v);
-        try {
-            String html = fetchHtml(url);
-            Matcher m = Pattern.compile("\"main_url\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
-            if (!m.find()) {
-                Matcher m2 = Pattern.compile("\"contentUrl\"\\s*:\\s*\"([^\"]+)\"").matcher(html);
-                if (!m2.find()) return null;
-                m = m2;
-            }
-            String videoUrl = normalizeVideoUrl(m.group(1));
-            if (!videoUrl.matches("(?i)^https?://.*")) return null;
-            Map<String, Object> out = Json.obj();
-            out.put("url", videoUrl);
-            out.put("source", "web");
-            return out;
-        } catch (IOException e) {
-            // 404 = 网页版无该集直链（非限免集），静默回落 App 签名接口
-            if (!e.getMessage().contains("HTTP 404")) {
-                Log.warn("官网直链失败(" + url + "): " + e.getMessage());
-            }
             return null;
         }
     }
