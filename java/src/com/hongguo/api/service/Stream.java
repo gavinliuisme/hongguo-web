@@ -26,7 +26,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 下载 + 纯离线解密流水线。
  * 移植自 server/src/stream.js。
  *
- * 流程：video_model 取spade_a 与密文直链
+ * 流程：videoTrack 取 spade_a 与直链（官网明文直链 -> AppSource 取址，
+ *      见 videoTrack 注释）
  *      -> 下载密文 mp4
  *      -> spade 解包 content key（纯字节变换）
  *      -> AES-128-CTR 全轨解密（视频+音频各用自身逐样本 IV）
@@ -78,43 +79,11 @@ public final class Stream {
         public long size;
     }
 
-    /** 依据清晰度选择轨道：best 取最大体积；指定值按 definition 前缀匹配。 */
-    @SuppressWarnings("unchecked")
-    static Map<String, Object> pickTrack(List<Object> tracks, String quality) {
-        if (tracks == null || tracks.isEmpty()) return null;
-        List<Object> list = new ArrayList<>(tracks);
-        list.sort((a, b) -> Long.compare(sizeOf(b), sizeOf(a)));
-        if (quality == null || quality.isEmpty() || quality.equals("best")) {
-            return Json.optObj(list.get(0));
-        }
-        String want = quality.toLowerCase();
-        for (Object tObj : list) {
-            Map<String, Object> t = Json.optObj(tObj);
-            if (t == null) continue;
-            Map<String, Object> meta = Json.optObj(t.get("video_meta"));
-            String def = meta != null
-                    ? Json.optStr(meta.get("definition"), "")
-                    : Json.optStr(t.get("definition"), "");
-            def = def.toLowerCase();
-            if (def.contains(want) || (!def.isEmpty() && want.contains(def))) return t;
-        }
-        return Json.optObj(list.get(0));
-    }
-
-    @SuppressWarnings("unchecked")
-    private static long sizeOf(Object trackObj) {
-        Map<String, Object> t = Json.optObj(trackObj);
-        if (t == null) return 0;
-        Map<String, Object> meta = Json.optObj(t.get("video_meta"));
-        return meta == null ? 0 : Json.optLong(meta.get("size"), 0);
-    }
-
     /** 取该集指定清晰度的轨道信息。 */
-    @SuppressWarnings("unchecked")
     public static VideoTrack videoTrack(String vid, String quality) throws Exception {
         // 官网明文直链优先（限免集）：免 spade 解密、免 ffmpeg remux，拿到即可直下。
         // 前提是知道 vid 所属剧集（/stream?vid= 只带 vid，剧 id 由 Client 的反查表提供）；
-        // 非限免集的官网页面服务端返回 404，playUrl 返回 null，自然回落 App video_model。
+        // 非限免集的官网页面服务端返回 404，playUrl 返回 null，自然改走 App 取址。
         String sid = Client.seriesIdOfVid(String.valueOf(vid));
         if (sid != null) {
             Map<String, Object> web = WebSource.playUrl(sid, String.valueOf(vid));
@@ -128,25 +97,11 @@ public final class Stream {
             }
         }
 
-        Map<String, Object> tracks =
-                Client.getVideoTracks(new ArrayList<>(Arrays.asList(vid)), false, 5);
-        Object listObj = tracks.get(String.valueOf(vid));
-        List<Object> list = (listObj instanceof List) ? (List<Object>) listObj : new ArrayList<>();
-        if (list.isEmpty()) return null;
-        Map<String, Object> picked = pickTrack(list, quality);
-        if (picked == null) return null;
-
-        Map<String, Object> enc = Json.optObj(picked.get("encrypt_info"));
-        Map<String, Object> meta = Json.optObj(picked.get("video_meta"));
-        VideoTrack out = new VideoTrack();
-        out.url = Json.optStr(picked.get("main_url"), "");
-        out.spadeA = enc == null ? null : Json.optStr(enc.get("spade_a"), null);
-        out.encrypt = enc != null && Json.optBool(enc.get("encrypt"), false);
-        out.definition = meta != null
-                ? Json.optStr(meta.get("definition"), "?")
-                : Json.optStr(picked.get("definition"), "?");
-        out.size = meta == null ? 0 : Json.optLong(meta.get("size"), 0);
-        return out;
+        // App 取址：b 域名 multi_video_model/v1 + fallback_api 二次请求。
+        // 上游 a 域名 preload/v1 已对部分分集（后集高发）不再返回 video_model，
+        // 故分集的直链只走这一条路；拿不到时返回 null，
+        // 由 ensureDecrypted 报「无直链 / video_model」。
+        return AppSource.fetch(String.valueOf(vid), quality);
     }
 
     // ==================== 下载 ====================
@@ -532,8 +487,8 @@ public final class Stream {
                     },
                     new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
 
-    /** 预热失败后的最大重试次数（不含首次尝试）。 */
-    private static final int PREWARM_MAX_RETRIES = 3;
+    /** 预热失败后的最大重试次数（不含首次尝试），即最多共尝试 3 次。 */
+    private static final int PREWARM_MAX_RETRIES = 2;
 
     /** 两次预热重试之间的间隔（毫秒）。 */
     private static final long PREWARM_RETRY_DELAY_MS = 500L;

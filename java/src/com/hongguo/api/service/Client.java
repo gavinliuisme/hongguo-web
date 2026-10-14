@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 红果短剧 API 客户端。
  *
  * 移植自 server/src/client.js。保留原有语义：设备身份池、_rticket 时间戳、
- * x-ss-stub MD5、列表类接口免签、video_model 直链5 小时缓存、风控/登录态退避重试。
+ * x-ss-stub MD5、列表类接口免签、剧集详情缓存、风控/登录态退避重试。
  *
  * 与 Node 版的两处架构变化：
  *  - 签名不再走外部 unidbg 服务，而是本进程内 PureSign 纯代码计算
@@ -48,7 +48,6 @@ public final class Client {
         String env = Log.env("HONGGUO_CONTENT_CONFIG", null);
         if (env != null) candidates.add(env);
         candidates.add(Paths.get("server", "config", "content-config.json").toString());
-        candidates.add(Paths.get("backend", "guest-config.json").toString());
 
         for (String c : candidates) {
             try {
@@ -61,7 +60,7 @@ public final class Client {
                 // 尝试下一个
             }
         }
-        throw new RuntimeException("未找到内容配置（content-config.json / guest-config.json）");
+        throw new RuntimeException("未找到内容配置（content-config.json）");
     }
 
     private static final Map<String, Object> CFG = loadConfig();
@@ -875,205 +874,6 @@ public final class Client {
             }
         }
         return new Object[]{out, failed};
-    }
-
-    /** 归一化 video_model 轨道结构，拒绝非法 URL 与结构。 */
-    public static List<Object> videoModelTracks(Object model) throws Exception {
-        Object tracks = model;
-        if (model instanceof List) {
-            // 保持
-        } else if (model != null) {
-            Map<String, Object> m = Json.optObj(model);
-            if (m != null && m.containsKey("video_list")) tracks = m.get("video_list");
-            else tracks = m;
-        }
-        if (tracks instanceof Map) {
-            tracks = new ArrayList<>(((Map<?, ?>) tracks).values());
-        }
-        if (!(tracks instanceof List)) {
-            Safeguards.ApiError err = new Safeguards.ApiError("不支持的 video_model 结构");
-            Map<String, Object> shape = Json.obj();
-            shape.put("modelType", model == null ? "null"
-                    : (model instanceof List ? "list" : Json.typeName(model)));
-            shape.put("tracksType", tracks instanceof List ? "list" : Json.typeName(tracks));
-            err.modelShape = shape;
-            throw err;
-        }
-        List<?> tl = (List<?>) tracks;
-        for (Object t : tl) {
-            if (Json.optObj(t) == null) {
-                Safeguards.ApiError err = new Safeguards.ApiError("不支持的 video_model 结构");
-                Map<String, Object> shape = Json.obj();
-                shape.put("modelType", model == null ? "null"
-                        : (model instanceof List ? "list" : Json.typeName(model)));
-                shape.put("tracksType", "list");
-                err.modelShape = shape;
-                throw err;
-            }
-        }
-
-        List<Object> out = new ArrayList<>();
-        for (Object sourceObj : tl) {
-            Map<String, Object> source = Json.optObj(sourceObj);
-            Map<String, Object> track = new LinkedHashMap<>(source);
-            for (String field : new String[]{"main_url", "backup_url"}) {
-                Object valueObj = track.get(field);
-                if (valueObj == null) continue;
-                if (!(valueObj instanceof String)) {
-                    throw new Safeguards.ApiError("媒体 URL 类型非法");
-                }
-                String value = (String) valueObj;
-                if (!value.startsWith("http://") && !value.startsWith("https://")) {
-                    // 上游可能返回 base64 编码的 URL
-                    String decoded;
-                    try {
-                        decoded = new String(Crypto.base64Decode(value), StandardCharsets.UTF_8);
-                    } catch (Exception e) {
-                        throw new Safeguards.ApiError("非法编码的媒体 URL");
-                    }
-                    if (!decoded.startsWith("http")) {
-                        throw new Safeguards.ApiError("非法编码的媒体 URL");
-                    }
-                    value = decoded;
-                }
-                java.net.URI parsed;
-                try {
-                    parsed = java.net.URI.create(value);
-                } catch (Exception e) {
-                    throw new Safeguards.ApiError("非法媒体 URL");
-                }
-                String scheme = parsed.getScheme();
-                if (scheme == null || !("http".equals(scheme) || "https".equals(scheme))
-                        || parsed.getHost() == null || parsed.getUserInfo() != null) {
-                    throw new Safeguards.ApiError("非法媒体 URL");
-                }
-                track.put(field, value);
-            }
-            Map<String, Object> vm = Json.optObj(track.get("video_meta"));
-            if (vm == null) vm = Json.obj();
-            Map<String, Object> ei = Json.optObj(track.get("encrypt_info"));
-            if (ei == null) ei = Json.obj();
-            track.put("video_meta", mergePick(source, vm,
-                    new String[]{"size", "definition", "codec_type", "vwidth", "vheight"}));
-            track.put("encrypt_info", mergePick(source, ei,
-                    new String[]{"encrypt", "spade_a"}));
-            out.add(track);
-        }
-        return out;
-    }
-
-    /** source 中存在的字段优先，其次被嵌套对象覆盖（对齐 JS 的 { ...pick, ...vm }）。 */
-    private static Map<String, Object> mergePick(Map<String, Object> source,
-                                                 Map<String, Object> nested, String[] keys) {
-        Map<String, Object> out = new LinkedHashMap<>();
-        for (String k : keys) {
-            if (source.containsKey(k)) out.put(k, source.get(k));
-        }
-        out.putAll(nested);
-        return out;
-    }
-
-    /** video_model 批量请求体（每批 5 个 vid）。 */
-    private static Map<String, Object> videoModelBody(List<String> batch) {
-        Map<String, Object> biz = Json.obj();
-        biz.put("detail_page_version", 0);
-        biz.put("device_level", 3);
-        biz.put("disable_digg_stat", false);
-        biz.put("need_all_video_definition", true);
-        biz.put("need_mp4_align", false);
-        biz.put("use_os_player", false);
-        biz.put("use_server_dns", false);
-        biz.put("video_platform", 1024);
-
-        Map<String, Object> mixed = Json.obj();
-        mixed.put("1004", new ArrayList<Object>(batch));
-
-        Map<String, Object> out = Json.obj();
-        out.put("biz_param", biz);
-        out.put("dr_scene", "preload");
-        out.put("mixed_video_id_map", mixed);
-        return out;
-    }
-
-    /** 批量取视频直链。返回 {vid: {url, backup, size, definition}}，缓存 5 小时。 */
-    public static Map<String, Object> getVideoUrls(List<String> vids, boolean force) throws Exception {
-        Map<String, Object> tracks = getVideoTracks(vids, force, 5);
-        Map<String, Object> out = Json.obj();
-        for (Map.Entry<String, Object> e : tracks.entrySet()) {
-            List<Object> list = castList(e.getValue());
-            Map<String, Object> best = null;
-            long bestSize = 0;
-            for (Object itemObj : list) {
-                Map<String, Object> item = Json.optObj(itemObj);
-                if (item == null) continue;
-                Map<String, Object> meta = Json.optObj(item.get("video_meta"));
-                long size = meta == null ? 0 : Json.optLong(meta.get("size"), 0);
-                if (best == null || size > bestSize) {
-                    Map<String, Object> b = Json.obj();
-                    b.put("url", item.get("main_url"));
-                    b.put("backup", item.get("backup_url"));
-                    b.put("size", size);
-                    b.put("definition", meta == null
-                            ? "?" : Json.optStr(meta.get("definition"), "?"));
-                    b.put("url_is_http", String.valueOf(
-                            item.getOrDefault("main_url", "")).startsWith("http"));
-                    best = b;
-                    bestSize = size;
-                }
-            }
-            if (best != null) {
-                out.put(e.getKey(), best);
-                Safeguards.cacheSet(Safeguards.cacheKey("vmodel", e.getKey()), best, 18000);
-            }
-        }
-        return out;
-    }
-
-    /** 批量取每个 vid 的完整 video_list 轨道。 */
-    public static Map<String, Object> getVideoTracks(List<String> vids, boolean force, int batchSizeArg)
-            throws Exception {
-        Map<String, Object> out = new LinkedHashMap<>();
-        List<String> todo = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-
-        for (String v : vids) {
-            String s = v == null ? "" : v;
-            if (s.isEmpty() || !seen.add(s)) continue;
-            Object c = force ? null
-                    : Safeguards.cacheGet(Safeguards.cacheKey("vmtracks", s));
-            if (c != null) out.put(s, c);
-            else todo.add(s);
-        }
-
-        int bs = Math.max(1, Math.min(batchSizeArg > 0 ? batchSizeArg : 5, 5));
-        for (int i = 0; i < todo.size(); i += bs) {
-            List<String> batch = todo.subList(i, Math.min(i + bs, todo.size()));
-            Map<String, Object> j = api("POST", "/novel/player/multi_video_model/preload/v1",
-                    videoModelBody(batch), null, 3, true);
-            Map<String, Object> data = Json.optObj(j.get("data"));
-            if (data == null) continue;
-            for (Map.Entry<String, Object> e : data.entrySet()) {
-                Map<String, Object> v = Json.optObj(e.getValue());
-                if (v == null) continue;
-                Object vmObj = v.get("video_model");
-                if (vmObj == null) continue;
-                Object parsed = vmObj;
-                if (vmObj instanceof String) {
-                    try {
-                        parsed = Json.parse((String) vmObj);
-                    } catch (Exception ex) {
-                        continue;
-                    }
-                }
-                List<Object> tracks = videoModelTracks(parsed);
-                if (!tracks.isEmpty()) {
-                    out.put(String.valueOf(e.getKey()), tracks);
-                    Safeguards.cacheSet(
-                            Safeguards.cacheKey("vmtracks", String.valueOf(e.getKey())), tracks, 18000);
-                }
-            }
-        }
-        return out;
     }
 
     /** 取漫剧榜单。board: recommend / hot / new。 */

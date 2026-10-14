@@ -4,6 +4,7 @@ import com.hongguo.api.core.Mp4;
 import com.hongguo.api.core.PureSign;
 import com.hongguo.api.core.Safeguards;
 import com.hongguo.api.core.Spade;
+import com.hongguo.api.service.AppSource;
 import com.hongguo.api.service.Client;
 import com.hongguo.api.service.Stream;
 import com.hongguo.api.util.Config;
@@ -833,6 +834,78 @@ final class SelfTest {
         check("null 结果不抛异常", p7.items.isEmpty() && !p7.hasMore, "");
     }
 
+    /**
+     * 20. App 取址链路：合成设备身份、python 风格 query 编码、URL 白名单。
+     *
+     * 背景：上游 a 域名 preload/v1 对部分分集不再返回 video_model（表现为
+     * 「无直链 / video_model」），取直链已统一改走 AppSource（移植自
+     * jackotom/hongguo-drama 的 app-source.js）：b 域名 multi_video_model/v1
+     * + fallback_api 二次请求。这里锁住三个不依赖网络的环节：身份字段、
+     * query 字节级编码（签名对 query 敏感，*!'() 必须转 %XX）、媒体域名白名单。
+     */
+    private void appSource() {
+        section("20. App 取址链路：合成身份 / query 编码 / URL 白名单");
+
+        // query 编码必须复刻 python urllib.parse.quote 的兜底行为
+        check("pyEncode: * 编码为 %2A（resolution=1280*2772）",
+                AppSource.pyEncode("1280*2772").equals("1280%2A2772"),
+                AppSource.pyEncode("1280*2772"));
+        check("pyEncode: !'() 编码为 %21%27%28%29",
+                AppSource.pyEncode("a!b'c(d)e").equals("a%21b%27c%28d%29e"),
+                AppSource.pyEncode("a!b'c(d)e"));
+        check("pyEncode: 字母数字与 .-_~ 原样",
+                AppSource.pyEncode("novelread-7.1.3_32~x").equals("novelread-7.1.3_32~x"),
+                AppSource.pyEncode("novelread-7.1.3_32~x"));
+
+        // 合成设备身份：字段值锁定 + iid/device_id 每请求不同
+        Map<String, Object> d = AppSource.device();
+        check("设备身份: version_code=71332",
+                "71332".equals(String.valueOf(d.get("version_code"))), "");
+        check("设备身份: channel=update_64",
+                "update_64".equals(String.valueOf(d.get("channel"))), "");
+        check("设备身份: device_type=25053RT47C",
+                "25053RT47C".equals(String.valueOf(d.get("device_type"))), "");
+        String id1 = String.valueOf(d.get("device_id"));
+        String id2 = String.valueOf(d.get("iid"));
+        check("设备身份: device_id 为 16 位数字", id1.matches("\\d{16}"), id1);
+        check("设备身份: iid 为 16 位数字", id2.matches("\\d{16}"), id2);
+        check("设备身份: iid 与 device_id 不同", !id1.equals(id2), "");
+
+        // URL 白名单：https 子域放行，http / 非白名单拒绝
+        try {
+            String u = AppSource.checkedUrl("https://p3.qznovelvod.com/a/b.mp4",
+                    AppSource.VOD_DOMAINS);
+            check("checkedUrl: 白名单子域放行", u.startsWith("https://"), u);
+        } catch (Exception e) {
+            check("checkedUrl: 白名单子域放行", false, String.valueOf(e.getMessage()));
+        }
+        try {
+            AppSource.checkedUrl("http://qznovelvod.com/a.mp4", AppSource.VOD_DOMAINS);
+            check("checkedUrl: http 被拒绝", false, "未拒绝");
+        } catch (Exception expected) {
+            check("checkedUrl: http 被拒绝", true, "");
+        }
+        try {
+            AppSource.checkedUrl("https://evil.example/a.mp4", AppSource.VOD_DOMAINS);
+            check("checkedUrl: 白名单外被拒绝", false, "未拒绝");
+        } catch (Exception expected) {
+            check("checkedUrl: 白名单外被拒绝", true, "");
+        }
+
+        // cleanUrl / pixelsOf / 非法 spade URL 布局
+        check("cleanUrl: 转义还原",
+                AppSource.cleanUrl("https:\\/\\/x.com\\u0026a.mp4")
+                        .equals("https://x.com&a.mp4"), "");
+        check("pixelsOf: 取第一组数字", AppSource.pixelsOf("1080p 高清") == 1080, "");
+        check("pixelsOf: 无数字返回 0", AppSource.pixelsOf("蓝光") == 0, "");
+        try {
+            AppSource.decryptSpadeUrl("bm90LWEtc3BhZGUtdXJs", new byte[32]);
+            check("decryptSpadeUrl: 非法布局被拒绝", false, "未拒绝");
+        } catch (Exception expected) {
+            check("decryptSpadeUrl: 非法布局被拒绝", true, "");
+        }
+    }
+
     /** 统计目录下的成品文件数（排除 .part/.enc 临时文件）。 */
     private static int countCacheFiles(Path dir) throws Exception {
         final int[] n = {0};
@@ -935,6 +1008,7 @@ final class SelfTest {
             t.cacheBounds();
             t.streamCacheLimit();
             t.searchPageSlice();
+            t.appSource();
         } catch (Exception e) {
             t.failed++;
             System.out.println("  ✗ 自检异常中断：" + e);
@@ -943,6 +1017,7 @@ final class SelfTest {
 
         section("运行环境");
         System.out.println("  上游 host     " + Client.HOST);
+        System.out.println("  App 源 host   " + AppSource.VIDEO_API_HOST);
         System.out.println("  设备身份     " + Client.identity().source
                 + "（device_id=" + Client.identity().deviceId + "）");
         System.out.println("  托管模式     " + Client.MANAGED);

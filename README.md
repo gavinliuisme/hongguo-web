@@ -312,7 +312,7 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/browse?genre=&theme=&sort=&days=` | 组合浏览 |
 | GET | `/episodes?series_id=` | 剧集列表 |
 | POST | `/metrics/batch` | 批量上报播放进度 |
-| GET | `/play?series_id=&ep=1-10` | 取加密直链（`encrypted_url` 为 CENC 密文） |
+| GET | `/play?series_id=&ep=1-10` | 取各集直链（`encrypted_url`：限免集为官网明文，其余为 CENC 密文） |
 | GET | `/video_url?vid=` | 单集取直链 |
 | GET | `/stream?vid=&quality=1080p` | **可播放**（服务端离线解密，支持 Range） |
 | GET | `/stream?series_id=&ep=1` | 同上，按集号 |
@@ -418,7 +418,7 @@ curl -H "x-api-key: <key>" \
 java -jar java/dist/hongguo-api.jar --selftest
 ```
 
-覆盖 19 组共 **128 项**断言：
+覆盖 20 组共 **144 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -441,12 +441,13 @@ java -jar java/dist/hongguo-api.jar --selftest
 | 17 | 缓存上限与过期清扫 |
 | 18 | stream-cache 数量上限（超出按修改时间淘汰最旧；上限取 `runtime.cache.max_files`，可被 `HONGGUO_CACHE_MAX_FILES` 覆盖） |
 | 19 | 搜索分页切片（skip 生效且 has_more 判据正确） |
+| 20 | App 取址链路：合成设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
 
 这些都是踩坑后固化的回归基线，用于判断「迁移是否等价」。
 预期结尾输出：
 
 ```
-  结果：128/128 全部通过
+  结果：144/144 全部通过
 ```
 
 自检不访问网络、不依赖任何外部服务，可在离线环境运行。
@@ -464,7 +465,7 @@ hongguo-web/
 │   ├── build-java.bat / .sh   构建 API 服务 JAR（纯 javac，无需联网）
 │   └── pack.sh                打包 5 个平台发行版（内置 JRE）
 ├── java/
-│   ├── src/com/hongguo/api/   Java 后端源码（21 个文件，零第三方依赖）
+│   ├── src/com/hongguo/api/   Java 后端源码（22 个文件，零第三方依赖）
 │   │   ├── Main.java          入口（--config / --stop / --selftest / --version）
 │   │   ├── Launcher.java      启动编排（API 服务 + 浏览器）
 │   │   ├── Server.java        HTTP 路由 + 鉴权 + 限流
@@ -480,6 +481,7 @@ hongguo-web/
 │   │   │   └── Safeguards.java   风控 + 缓存 + 节流
 │   │   ├── service/
 │   │   │   ├── WebSource.java    官网数据源（搜索/分集/明文直链）
+│   │   │   ├── AppSource.java    App 取址链路（b 域名 v1 + fallback_api）
 │   │   │   ├── Client.java       上游 API 客户端（签名 + 六请求头）
 │   │   │   ├── Stream.java       下载 + 解密 + remux
 │   │   │   └── Res.java          响应辅助（JSON/静态/Range）
@@ -563,10 +565,19 @@ HEVC 解码支持，就会这样——`readyState` 正常到 4、`videoWidth` �
 **Q：列表接口返回空 body？**
 
 A：这是上游的风控行为，与本地无关：`search` / `multi_video_detail` /
-`multi_video_model` 三个接口上游要求带签名，若请求未带或签名不被接受，
-上游返回 HTTP 200 + 空 body。本项目对这三个接口固定走本地签名，
-正常不会触发；若偶发出现，稍后重试即可。
-排查时先核对上游端点路径是否为现行的 `preload/v1`，再查签名。
+App 取址（b 域名 `multi_video_model/v1`）三个接口上游要求带签名，
+若请求未带或签名不被接受，上游返回 HTTP 200 + 空 body。本项目对这三个
+接口固定走本地签名，正常不会触发；若偶发出现，稍后重试即可。
+排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
+其余为 `preload/v1`），再查签名。
+
+**Q：播放失败，日志提示「无直链 / video_model」？**
+
+A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
+取直链已统一改走 App 取址链路（`AppSource`：b 域名 `multi_video_model/v1` +
+跟随 `fallback_api` 二次请求，媒体 URL 带 `key_seed` 时自动解密）。
+若仍失败，将该分集编号与日志反馈给维护者；
+临时规避可换其他清晰度或稍后重试。
 
 **Q：启动时报 `BindException: Address already in use`？**
 

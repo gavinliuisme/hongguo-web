@@ -525,18 +525,11 @@ public class Server {
                     sel.add(e);
                 }
             }
-            List<String> vids = new ArrayList<>();
-            for (Object eObj : sel) {
-                vids.add(Json.optStr(Json.optObj(eObj).get("vid"), ""));
-            }
-            Map<String, Object> urls = Client.getVideoUrls(vids, false);
-
             List<Object> out = new ArrayList<>();
             for (Object eObj : sel) {
                 Map<String, Object> e = Json.optObj(eObj);
                 String vid = Json.optStr(e.get("vid"), "");
-                Map<String, Object> info = Json.optObj(urls.get(vid));
-                if (info == null) info = Json.obj();
+                Map<String, Object> info = urlInfo(vid);
                 Map<String, Object> row = Json.obj();
                 row.put("index", Json.optLong(e.get("index"), 0));
                 row.put("vid", vid);
@@ -546,9 +539,6 @@ public class Server {
                 row.put("backup", info.get("backup"));
                 row.put("size", info.get("size"));
                 row.put("definition", info.get("definition"));
-                // 与 Node 版对齐：info.shape 为 undefined 时 JSON.stringify 会省略该键，
-                // 因此这里只在真正有值时才放入，避免输出 "shape": null。
-                if (info.get("shape") != null) row.put("shape", info.get("shape"));
                 row.put("url_is_http", info.get("url_is_http"));
                 row.put("stream_url", "/stream?vid=" + vid);
                 out.add(row);
@@ -556,7 +546,8 @@ public class Server {
             Map<String, Object> m = Json.obj();
             m.put("series_id", sid);
             m.put("title", Json.optStr(Json.optObj(meta.get("meta")).get("title"), ""));
-            m.put("note", "encrypted_url 为 CENC 密文直链；可播放用 stream_url（服务端纯离线解密）");
+            m.put("note", "encrypted_url：限免集为官网明文直链，其余为 CENC 密文直链；"
+                    + "可播放用 stream_url（服务端纯离线解密）");
             m.put("episodes", out);
             Res.json(ex, 200, m);
             return;
@@ -583,17 +574,14 @@ public class Server {
                 Res.fail(ex, 400, "缺少 vid");
                 return;
             }
-            Map<String, Object> urls = Client.getVideoUrls(
-                    new ArrayList<>(Arrays.asList(vid)), false);
-            Map<String, Object> info = Json.optObj(urls.get(String.valueOf(vid)));
-            if (info == null || info.get("url") == null) {
+            Map<String, Object> info = urlInfo(vid);
+            if (info.get("url") == null) {
                 Res.fail(ex, 404, "无直链");
                 return;
             }
             Map<String, Object> m = Json.obj();
             m.put("vid", vid);
             m.put("url", info.get("url"));
-            m.put("backup", info.get("backup"));
             m.put("size", info.get("size"));
             m.put("definition", info.get("definition"));
             Res.json(ex, 200, m);
@@ -700,6 +688,30 @@ public class Server {
             return;
         }
         Res.fail(ex, 404, "not found");
+    }
+
+    /**
+     * 单集取直链信息（url / size / definition / url_is_http）。
+     *
+     * 统一走 {@link Stream#videoTrack}：官网明文直链（限免集）优先，
+     * 其余走 AppSource 的 b 域名 multi_video_model/v1 链路。
+     * 取不到时返回空 map（调用方按「无直链」处理），异常只记日志不外抛，
+     * 避免一个坏集带垮整个 /play 列表。
+     */
+    private Map<String, Object> urlInfo(String vid) {
+        Map<String, Object> info = Json.obj();
+        if (vid == null || vid.isEmpty()) return info;
+        try {
+            Stream.VideoTrack t = Stream.videoTrack(vid, "best");
+            if (t == null || t.url == null || t.url.isEmpty()) return info;
+            info.put("url", t.url);
+            info.put("size", t.size);
+            info.put("definition", t.definition);
+            info.put("url_is_http", t.url.startsWith("http"));
+        } catch (Exception e) {
+            Log.warn("取直链失败 (" + vid + "): " + e.getMessage());
+        }
+        return info;
     }
 
     /** 处理 /stream：定位集号 -> 确保解密 -> Range 串流。 */
