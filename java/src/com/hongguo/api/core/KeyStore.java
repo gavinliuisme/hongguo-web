@@ -2,7 +2,6 @@ package com.hongguo.api.core;
 
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Json;
-import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
 import java.nio.charset.StandardCharsets;
@@ -52,9 +51,9 @@ public final class KeyStore {
     }
 
     public KeyStore() {
-        String d = Config.str("runtime.data_dir", null);
-        Path dir = (d != null) ? Paths.get(d) : Paths.get("server", "data");
-        this.file = dir.resolve("apikeys.json");
+        // 固定位于 server/config（与 config.json 同目录）：密钥与设备身份属于
+        // 长期状态，不随 runtime.data_dir（只影响视频缓存）迁移。
+        this.file = Paths.get("server", "config", "apikeys.json");
         load();
     }
 

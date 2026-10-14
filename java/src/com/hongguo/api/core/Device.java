@@ -33,21 +33,24 @@ import java.util.Map;
  * 优先级：
  *   1. 环境变量 HONGGUO_DEVICE_ID / HG_DEVICE_ID（便于多实例隔离）
  *   2. 配置里已有的 device_id（content-config.json base_query）
- *   3. server/data/device.json 中持久化的值
+ *   3. server/config/device.json 中持久化的值
  *   4. 以上都没有时生成新的并落盘
  */
 public final class Device {
 
     private static final SecureRandom RND = new SecureRandom();
 
-    private static Path dataDir() {
-        String d = Config.str("runtime.data_dir", null);
-        if (d != null) return Paths.get(d);
-        return Paths.get("server", "data");
+    /**
+     * 持久化目录：server/config（与 config.json / content-config.json 同处）。
+     * 固定不随 runtime.data_dir 迁移——后者只影响视频缓存（stream-cache），
+     * 设备身份与密钥属于长期状态，归入 config 目录。
+     */
+    private static Path configDir() {
+        return Paths.get("server", "config");
     }
 
     private static Path deviceFile() {
-        return dataDir().resolve("device.json");
+        return configDir().resolve("device.json");
     }
 
     /** device.json 的落盘路径（自检与诊断用）。 */

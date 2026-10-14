@@ -83,7 +83,7 @@ public final class Launcher {
         // 重启沿用同一口令，不再重复打扰；环境变量显式设置时同样不输出。
         if (server.adminTokenFresh()) {
             Log.info("管理口令(ADMIN_TOKEN) " + server.adminToken()
-                    + "（已写入 server/data/apikeys.json，重启沿用）");
+                    + "（已写入 server/config/apikeys.json，重启沿用）");
         }
 
         server.start(bindHost, apiPort);
@@ -268,8 +268,11 @@ public final class Launcher {
         System.out.printf("    api.port       : %d%n", Config.num("api.port", 8000));
         System.out.printf("    签名方式       : %s%n", "本地纯代码签名（PureSign，内置）");
         System.out.printf("    transcode      : %s%n", Config.bool("runtime.transcode", false));
-        System.out.printf("    data_dir       : %s%n",
-                Config.str("runtime.data_dir", "server/data"));
+        // data_dir 只承载视频缓存（落在 server/stream-cache）；设备身份
+        // （device.json）与密钥（apikeys.json）固定位于 server/config，
+        // 不随本项迁移。
+        System.out.printf("    data_dir(视频缓存) : %s%n",
+                Config.str("runtime.data_dir", "server"));
         System.out.println("  " + "-".repeat(56));
         System.out.println();
     }

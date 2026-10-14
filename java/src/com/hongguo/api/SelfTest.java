@@ -380,7 +380,7 @@ final class SelfTest {
         check("已注入 base_query",
                 Client.baseQuery().get("device_id").equals(id.deviceId), "");
         check("device.json 已落盘",
-                Files.exists(com.hongguo.api.core.Device.storeFile()), "");
+                Files.exists(com.hongguo.api.core.Device.storeFile()), id.source);
 
         // iid 恒为 0：非 0 随机 iid 会触发上游风控
         Object iid = Client.baseQuery().get("iid");

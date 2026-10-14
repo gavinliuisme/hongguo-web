@@ -256,7 +256,7 @@ ffmpeg -version # 可选
 > **默认不做转码**：服务端只做 `-c copy` 剥离 CENC 信令，源流 HEVC(H.265)
 > 直出。若你的机器缺 HEVC 解码支持，开启转码的办法见常见问题「画面全黑」。
 >
-> 解密产物落在 `server/data/stream-cache/<vid>_<清晰度>.play.mp4`。
+> 解密产物落在 `server/stream-cache/<vid>_<清晰度>.play.mp4`。
 > 注意扩展名是 `.play.mp4` 而非 `.mp4`（ffmpeg remux 去掉 CENC 信令后会改名），
 > 手写脚本判断缓存是否存在时不要只找 `.mp4`。
 >
@@ -373,15 +373,15 @@ curl -H "x-api-key: <key>" \
 |---|---|---|---|
 | `PORT` | `8000` | 监听端口 | `api.port` |
 | `BIND_HOST` | `127.0.0.1` | 监听地址。**改成 `0.0.0.0` 即对外暴露，务必同时设 `ADMIN_TOKEN`** | `api.host` |
-| `ADMIN_TOKEN` | 空 | `/admin/*` 与 `/stats` 的管理令牌。不设时首次启动自动生成 64 位口令并写入 `server/data/apikeys.json` 的 `admin_token`，重启沿用；环境变量优先 | `server/data/apikeys.json` 的 `admin_token` |
+| `ADMIN_TOKEN` | 空 | `/admin/*` 与 `/stats` 的管理令牌。不设时首次启动自动生成 64 位口令并写入 `server/config/apikeys.json` 的 `admin_token`，重启沿用；环境变量优先 | `server/config/apikeys.json` 的 `admin_token` |
 | `RATE_PER_MIN` | `120` | 每分钟请求上限（限流） | 无，仅环境变量 |
 | `HG_THROTTLE_MS` | `260` | 上游请求串行节流间隔（毫秒） | `runtime.throttle_ms` |
 | `DEVICE_POOL_SIZE` | `0` | 设备身份池大小，0 为关闭 | 无，仅环境变量 |
 | `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `content-config.json` 的 `api_host`） |
 | `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `content-config.json` 的 `session_headers.user-agent`） |
 | `HONGGUO_CONTENT_CONFIG` | `server/config/content-config.json` | 基础查询参数配置 | 无，仅环境变量 |
-| `HONGGUO_DATA_DIR` | `server/data` | 数据目录（密钥、缓存） | `runtime.data_dir` |
-| `HONGGUO_STREAM_CACHE` | `server/data/stream-cache` | 解密成品缓存 | 无，仅环境变量 |
+| `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；`device.json` 与 `apikeys.json` 固定位于 `server/config`，不随本项迁移） | `runtime.data_dir` |
+| `HONGGUO_STREAM_CACHE` | `server/stream-cache` | 解密成品缓存 | 无，仅环境变量 |
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
 | `HG_TRANSCODE` | 空（不转码） | 设为 `1` 时把 HEVC 转成 H.264，仅在机器缺 HEVC 解码器时才需要 | `runtime.transcode` |
@@ -399,16 +399,22 @@ curl -H "x-api-key: <key>" \
 
 ### 输出与日志
 
-控制台**只显示 `hongguo-api.jar` 的运行输出**（服务地址、首次自动生成的管理口令、运行统计等；管理口令仅在 `apikeys.json` 里没有、系统自动生成时提示一次，重启沿用不再重复显示）。
-启动脚本自身的环境检查、端口探测、构建过程等排障信息不打印到控制台，统一写入：
+控制台即全部输出：服务地址、首次自动生成的管理口令、运行统计、告警等都直接
+打印在终端（管理口令仅在 `apikeys.json` 里没有、系统自动生成时提示一次，重启
+沿用不再重复显示）。启动脚本已瘦身为薄壳，不再写任何日志文件——早期版本
+`server/data/log/start.log` 一套已随脚本瘦身移除。
 
-| 路径 | 内容 |
-| --- | --- |
-| `server/data/log/start.log` | 启动器日志，每次启动覆盖。含 Java 探测结果、版本闸门、实际端口与运行模式 |
+若需要留档，自行重定向即可，例如：
 
-启动失败时控制台只会提示日志文件路径，具体原因到日志里查。
-若想在终端直接看到全部启动信息，可自行把 `start.bat` / `start.sh`
-中 `call :prepare 1>>"%LOG_FILE%"` 的重定向去掉。
+```bash
+# Linux / macOS
+bash scripts/start.sh > run.log 2>&1
+```
+
+```bat
+:: Windows
+start.bat > run.log 2>&1
+```
 
 ---
 
@@ -497,7 +503,9 @@ hongguo-web/
 ├── server/
 │   ├── config/config.json      启动配置（端口、监听地址、调优参数）
 │   ├── config/content-config.json  上游配置与 base_query
-│   └── data/                  运行时数据（密钥、设备标识、解密缓存）
+│   ├── config/apikeys.json     管理口令等（首次启动自动生成，不入库）
+│   ├── config/device.json      设备标识（首次启动自动生成，不入库）
+│   └── stream-cache/           解密成品缓存（运行时生成，不入库）
 └── web/                       前端静态资源（可直接浏览器打开）
     ├── index.html
     ├── styles.css
@@ -512,7 +520,7 @@ hongguo-web/
 
 A：按顺序排查：
 
-1. 确认 `server/data/device.json` 存在且内容合法：
+1. 确认 `server/config/device.json` 存在且内容合法：
 
    ```json
    { "device_id": "7091873872252626" }
@@ -714,6 +722,6 @@ A：不用填。收到 401 时前端会自动换新密钥并重新加载，卡�
 
 - 签名与解密全部在服务进程内完成，不监听任何额外端口；
   默认只监听 `127.0.0.1`，若改为 `0.0.0.0` 对外暴露，**必须**设置 `ADMIN_TOKEN`
-  （环境变量，或写进 `server/data/apikeys.json` 的 `admin_token`）。
+  （环境变量，或写进 `server/config/apikeys.json` 的 `admin_token`）。
 - 目录穿越防护已启用（`path.resolve` + 前缀校验），静态资源优先于鉴权路由。
 - 本项目仅供技术研究与学习，请勿用于批量抓取或传播受版权保护的内容。

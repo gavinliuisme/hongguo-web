@@ -144,7 +144,9 @@ mkdir -p "$COMMON"
 trap 'rm -rf "$WORK"' EXIT
 
 tar -C "$SRC" -cf - \
-  --exclude='./server/data' \
+  --exclude='./server/stream-cache' \
+  --exclude='./server/config/apikeys.json' \
+  --exclude='./server/config/device.json' \
   --exclude='./java/build' \
   --exclude='./.git' \
   --exclude='./jre' \
@@ -159,13 +161,11 @@ tar -C "$SRC" -cf - \
   . | tar -C "$COMMON" -xf -
 
 # 运行时目录：空目录不会被 git/tar 保留，需显式重建
-mkdir -p "$COMMON/server/data/stream-cache"
-cat > "$COMMON/server/data/.gitkeep" <<'EOF'
-运行时数据目录。首次启动会自动签发 server/data/apikeys.json，
-设备标识落在 server/data/device.json，
-解密成品缓存在 server/data/stream-cache/，
-启动器自身的检查/排障日志写入 server/data/log/start.log
-（该目录由启动脚本首次运行时自动创建）。
+mkdir -p "$COMMON/server/stream-cache"
+cat > "$COMMON/server/stream-cache/.gitkeep" <<'EOF'
+解密成品缓存目录。首次启动会自动签发
+server/config/apikeys.json，设备标识落在 server/config/device.json
+（两者属长期状态，归入 config 目录）。
 EOF
 
 # ---------- JRE 下载与缓存 ----------

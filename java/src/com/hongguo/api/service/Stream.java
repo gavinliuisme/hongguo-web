@@ -41,7 +41,9 @@ public final class Stream {
         String d = Log.env("HONGGUO_STREAM_CACHE", null);
         if (d != null) return Paths.get(d);
         String dd = Config.str("runtime.data_dir", null);
-        Path base = (dd != null) ? Paths.get(dd) : Paths.get("server", "data");
+        // 默认落在 server/stream-cache（data 目录已撤销，缓存直接挂到 server 下）。
+        // runtime.data_dir 语义收窄为「视频缓存根目录」，设了就以它为根。
+        Path base = (dd != null) ? Paths.get(dd) : Paths.get("server");
         // 转绝对路径：/download 会把落盘路径回给调用方，相对路径不便定位文件
         return base.resolve("stream-cache").toAbsolutePath();
     }
