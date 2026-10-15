@@ -120,7 +120,7 @@ JAR 不存在时先按上表构建。
 |---|---|---|
 | Java 运行时 | **>= 20**；发行包已内置 `jre`（**Temurin 25 LTS**，按目标平台） | 必需 |
 | JDK（含 javac） | 20+ | 仅重新构建时需要（发行包已内置 JAR） |
-| ffmpeg / ffprobe | 任意近期版本 | 可选，用于剥离 CENC 信令 |
+| ffmpeg / ffprobe | 任意近期版本 | 可选。剥离 CENC 信令默认走纯 Java 减壳，仅布局不符时回落；转码 HEVC 时才必需 |
 
 ### Java 运行时从哪来
 
@@ -253,17 +253,20 @@ ffmpeg -version # 可选
 「播放结束（连播已关闭）」；播完最后一集提示「已播完最后一集」。
 单集播放（无剧集列表）时不会触发连播。
 
-> **默认不做转码**：服务端只做 `-c copy` 剥离 CENC 信令，源流 HEVC(H.265)
-> 直出。若你的机器缺 HEVC 解码支持，开启转码的办法见常见问题「画面全黑」。
+> **默认不做转码**：服务端只剥离 CENC 信令，源流 HEVC(H.265) 直出。
+> 若你的机器缺 HEVC 解码支持，开启转码的办法见常见问题「画面全黑」。
 >
 > 解密产物落在 `server/stream-cache/<vid>_<清晰度>.play.mp4`。
-> 注意扩展名是 `.play.mp4` 而非 `.mp4`（ffmpeg remux 去掉 CENC 信令后会改名），
+> 注意扩展名是 `.play.mp4` 而非 `.mp4`（剥离 CENC 信令后会改名），
 > 手写脚本判断缓存是否存在时不要只找 `.mp4`。
 >
-> **未安装 ffmpeg 时** remux 步骤跳过，解密产物为 `<vid>_<清晰度>.raw.mp4` ——
-> 文件内容**已是解密后的明文**（仅未剥离 CENC 信令），可直接播放；缓存命中判定
-> 同时覆盖 `.play.mp4` / `.mp4` / `.raw.mp4` 三个变体。日后装上 ffmpeg，
-> 旧的 `.raw.mp4` 会在下次命中缓存时自动补做 remux，升级为 `.play.mp4`。
+> **信令剥离默认不依赖 ffmpeg**：解密后由纯 Java 代码删信令盒、修补盒尺寸、
+> 平移 chunk 偏移、原样流拷 mdat，产物即 `.play.mp4`。仅当文件布局不在
+> 减壳支持范围（如 moov 在尾部）时才回落 ffmpeg remux；ffmpeg 也未安装时
+> 产物为 `<vid>_<清晰度>.raw.mp4`——内容已是解密后的明文（仅未剥离信令），
+> 可直接播放；缓存命中判定同时覆盖 `.play.mp4` / `.mp4` / `.raw.mp4`
+> 三个变体。日后装上 ffmpeg，旧的 `.raw.mp4` 会在下次命中缓存时自动补做
+> 剥离，升级为 `.play.mp4`。
 
 ### 列表分页与「加载更多」
 
@@ -385,6 +388,7 @@ curl -H "x-api-key: <key>" \
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
 | `HG_TRANSCODE` | 空（不转码） | 设为 `1` 时把 HEVC 转成 H.264，仅在机器缺 HEVC 解码器时才需要 | `runtime.transcode` |
+| `HONGGUO_PURE_STRIP` | 空（启用） | CENC 信令剥离方式：空 = 纯 Java 减壳（默认，不依赖 ffmpeg）；`0` = 强制走 ffmpeg remux | 无，仅环境变量 |
 | `HG_H264_ENCODER` | 空（自动探测） | 强制指定 H.264 编码器，如 `libx264` / `libopenh264` | 无，仅环境变量 |
 | `HG_SIGN_LIST` | 见代码 | 免签接口列表（一般不需改） | 无，仅环境变量 |
 | `HG_OPEN_BROWSER` | 空（跟随配置） | 设为 `0` 时服务就绪后不自动打开浏览器 | `launcher.open_browser` |
@@ -424,7 +428,7 @@ start.bat > run.log 2>&1
 java -jar java/dist/hongguo-api.jar --selftest
 ```
 
-覆盖 20 组共 **144 项**断言：
+覆盖 21 组共 **162 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -448,12 +452,13 @@ java -jar java/dist/hongguo-api.jar --selftest
 | 18 | stream-cache 数量上限（超出按修改时间淘汰最旧；上限取 `runtime.cache.max_files`，可被 `HONGGUO_CACHE_MAX_FILES` 覆盖） |
 | 19 | 搜索分页切片（skip 生效且 has_more 判据正确） |
 | 20 | App 取址链路：合成设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
+| 21 | CENC 信令纯 Java 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
 
 这些都是踩坑后固化的回归基线，用于判断「迁移是否等价」。
 预期结尾输出：
 
 ```
-  结果：144/144 全部通过
+  结果：162/162 全部通过
 ```
 
 自检不访问网络、不依赖任何外部服务，可在离线环境运行。
@@ -481,7 +486,7 @@ hongguo-web/
 │   │   │   ├── PureSign.java     本地纯代码签名（六个请求头）
 │   │   │   ├── Spade.java        spade -> content key
 │   │   │   ├── Sm3.java          SM3 摘要（x-medusa 签名用）
-│   │   │   ├── Mp4.java          BMFF 盒树 + CENC 解密
+│   │   │   ├── Mp4.java          BMFF 盒树 + CENC 解密 + 纯 Java 减壳（剥离信令）
 │   │   │   ├── Device.java       本机稳定 device_id
 │   │   │   ├── KeyStore.java     密钥管理
 │   │   │   └── Safeguards.java   风控 + 缓存 + 节流
@@ -566,9 +571,20 @@ HEVC 解码支持，就会这样——`readyState` 正常到 4、`videoWidth` �
    set HG_TRANSCODE=1 && scripts\start.bat
    ```
 
-> 转码默认**关闭**。实测 1080×1920 整集 `-c copy` 约 1 秒，
+> 转码默认**关闭**。实测 1080×1920 整集剥离信令约 1 秒（纯 Java 减壳），
 > 转 H.264 约 16 秒，所以支持 HEVC 的机器没必要转。
-> 若确实开了转码但没找到编码器，日志会提示并退回 `-c copy`。
+> 若确实开了转码但没找到编码器，日志会提示并退回只剥离信令。
+
+**Q：没装 ffmpeg 能播放吗？**
+
+A：能。剥离 CENC 信令默认走**纯 Java 减壳**（删信令盒、修补盒尺寸、
+平移 chunk 偏移、原样流拷 mdat），全程不调用外部进程，产物即
+`.play.mp4`。只有文件布局不在减壳支持范围时（如 moov 在文件尾部）
+才回落 ffmpeg remux；此时若 ffmpeg 也未安装，产物为 `.raw.mp4`——
+内容已是解密后的明文，同样能播，只是仍带 CENC 信令。缓存命中判定
+同时覆盖 `.play.mp4` / `.mp4` / `.raw.mp4` 三个变体，日后装上 ffmpeg，
+旧的 `.raw.mp4` 会在下次命中缓存时自动补做剥离。
+调试时可用 `HONGGUO_PURE_STRIP=0` 强制走 ffmpeg 路径做对照。
 
 **Q：列表接口返回空 body？**
 

@@ -14,7 +14,9 @@ import com.hongguo.api.util.Json;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -934,6 +936,291 @@ final class SelfTest {
         }
     }
 
+    /**
+     * 21. CENC 信令纯 Java 减壳（默认播放路径，不依赖 ffmpeg）。
+     *
+     * 背景：加密集解密后 moov 里仍带 sinf/senc 信令，旧实现一律交给 ffmpeg
+     * remux 重打包。现在默认走 Mp4.stripEncryption：删信令盒、修补各层尺寸、
+     * stco 偏移统一平移、mdat 原样流拷。这里把「尺寸差 / 信令除净 /
+     * mdat 逐字节一致 / 偏移正确 / 盒链完整 / 异常布局拒绝」全部钉住，
+     * 任一回退都会让这组变红。
+     */
+    private void cencStrip() {
+        section("21. CENC 信令纯 Java 减壳（sinf/senc 移除、stco 平移、mdat 原样）");
+        Path tmp = null;
+        try {
+            tmp = Files.createTempDirectory("hg-strip-");
+            byte[] enc = Mp4Fixture.buildMinimalEncryptedMp4();
+            Path in = tmp.resolve("in.mp4");
+            Files.write(in, enc);
+
+            // 预期信令尺寸直接从夹具量：sinf 盒 + senc 盒
+            int sinfPos = indexOfType(enc, "sinf");
+            int sencPos = indexOfType(enc, "senc");
+            check("夹具含 sinf 与 senc", sinfPos >= 0 && sencPos >= 0,
+                    "sinf@" + sinfPos + " senc@" + sencPos);
+            if (sinfPos < 0 || sencPos < 0) return;
+            long delta = u32At(enc, sinfPos) + u32At(enc, sencPos);
+            check("信令尺寸非零", delta > 0, "delta=" + delta);
+
+            // 旧 stco 首条目（chunk 偏移）与 mdat 负载起点
+            int stcoPos = indexOfType(enc, "stco");
+            int mdatPos = indexOfType(enc, "mdat");
+            long oldChunk = u32At(enc, stcoPos + 16);
+            long oldMdatPayload = mdatPos + 8;
+
+            Path outp = tmp.resolve("out.mp4");
+            check("头部形态减壳成功", Mp4.stripEncryption(in, outp), "");
+            if (!Files.exists(outp)) return;
+            byte[] outBytes = Files.readAllBytes(outp);
+
+            check("输出尺寸 = 原尺寸 - 信令字节",
+                    outBytes.length == enc.length - delta,
+                    outBytes.length + " vs " + (enc.length - delta));
+
+            // mdat 负载必须逐字节一致（原样流拷是减壳的保真基础）
+            int newMdatPos = indexOfType(outBytes, "mdat");
+            check("输出仍含 mdat", newMdatPos >= 0, "@" + newMdatPos);
+            if (newMdatPos >= 0) {
+                long newMdatPayload = newMdatPos + 8;
+                boolean same = outBytes.length - newMdatPayload
+                        == enc.length - oldMdatPayload;
+                if (same) {
+                    for (long i = 0; i < enc.length - oldMdatPayload; i++) {
+                        if (outBytes[(int) (newMdatPayload + i)]
+                                != enc[(int) (oldMdatPayload + i)]) {
+                            same = false;
+                            break;
+                        }
+                    }
+                }
+                check("mdat 负载逐字节一致", same, "");
+            }
+
+            // 新 stco 首条目 = 旧值 - delta，且正好指向新 mdat 负载起点
+            int newStcoPos = indexOfType(outBytes, "stco");
+            long newChunk = u32At(outBytes, newStcoPos + 16);
+            check("stco 偏移平移量正确", newChunk == oldChunk - delta,
+                    newChunk + " vs " + (oldChunk - delta));
+            if (newMdatPos >= 0) {
+                check("stco 指向新 mdat 负载起点",
+                        newChunk == newMdatPos + 8,
+                        newChunk + " vs " + (newMdatPos + 8));
+            }
+
+            // 信令除净：树里 senc 不在，stsd 条目内 sinf 不在
+            List<Mp4.Box> top = Mp4.parseBoxes(outBytes, 0, outBytes.length);
+            Mp4.Box moov = null;
+            for (Mp4.Box b : top) {
+                if (b.type.equals("moov")) { moov = b; break; }
+            }
+            check("输出盒链完整（末盒为 mdat 且收尾）",
+                    !top.isEmpty() && top.get(top.size() - 1).type.equals("mdat")
+                            && top.get(top.size() - 1).end() == outBytes.length
+                            && moov != null, "");
+            if (moov != null) {
+                boolean clean = true;
+                String entryType = null;
+                for (Mp4.Box trak : moov.children) {
+                    if (!trak.type.equals("trak")) continue;
+                    Mp4.Box mdia = trak.child("mdia");
+                    Mp4.Box stbl = mdia == null ? null
+                            : mdia.child("minf") == null ? null : mdia.child("minf").child("stbl");
+                    if (stbl == null) continue;
+                    if (stbl.child("senc") != null) clean = false;
+                    Mp4.Box stsd = stbl.child("stsd");
+                    if (stsd != null) {
+                        for (Mp4.Box e : stsd.children) {
+                            entryType = e.type;
+                            List<Mp4.Box> kids = Mp4.parseBoxes(outBytes,
+                                    e.start + 8 + 78, (int) e.end());
+                            for (Mp4.Box c : kids) {
+                                if (c.type.equals("sinf")) clean = false;
+                            }
+                        }
+                    }
+                }
+                check("sinf 与 senc 已除净", clean, "");
+                // 条目类型必须从 encv 改回原始类型（frma 记录的 hvc1），
+                // 否则播放器按加密流处理，ffprobe 的 codec_name 为 null
+                check("条目类型改回 hvc1", "hvc1".equals(entryType), String.valueOf(entryType));
+            }
+
+            // 尾部 moov 形态必须被拒（chunk 偏移全在 moov 之前，平移会错位）
+            Path tailIn = tmp.resolve("tail.mp4");
+            Files.write(tailIn, Mp4Fixture.buildTailMoovEncryptedMp4());
+            Path tailOut = tmp.resolve("tail-out.mp4");
+            check("尾部 moov 形态被拒（回落 ffmpeg）",
+                    !Mp4.stripEncryption(tailIn, tailOut), "");
+
+            // 垃圾输入必须被拒且不产生输出
+            Path junkIn = tmp.resolve("junk.mp4");
+            byte[] junk = new byte[512];
+            for (int i = 0; i < junk.length; i++) junk[i] = (byte) (i * 31);
+            Files.write(junkIn, junk);
+            Path junkOut = tmp.resolve("junk-out.mp4");
+            check("垃圾输入被拒", !Mp4.stripEncryption(junkIn, junkOut), "");
+            check("垃圾输入不产生输出", !Files.exists(junkOut), "");
+
+            // co64 变体：把夹具的 stco 换成 64 位 co64，验证大文件偏移路径
+            byte[] big = toCo64(enc);
+            if (big != null) {
+                Path bigIn = tmp.resolve("co64.mp4");
+                Files.write(bigIn, big);
+                Path bigOut = tmp.resolve("co64-out.mp4");
+                check("co64 形态减壳成功", Mp4.stripEncryption(bigIn, bigOut), "");
+                if (Files.exists(bigOut)) {
+                    byte[] bo = Files.readAllBytes(bigOut);
+                    int bStco = indexOfType(bo, "co64");
+                    long bChunk = bStco >= 0 ? u64At(bo, bStco + 16) : -1;
+                    int bMdat = indexOfType(bo, "mdat");
+                    check("co64 偏移平移且指向新 mdat",
+                            bChunk >= 0 && bMdat >= 0 && bChunk == bMdat + 8,
+                            "chunk=" + bChunk + " mdat=" + (bMdat + 8));
+                }
+            }
+            // frma 缺失变体：删掉 sinf 里的 frma（链式尺寸 -12，stco 不变），
+            // 验证兜底路径——按 encv 内的 hvcC 子盒推断出 hvc1
+            byte[] noFrma = dropBox(enc, "frma");
+            if (noFrma != null) {
+                Path nfIn = tmp.resolve("nofrma.mp4");
+                Files.write(nfIn, noFrma);
+                Path nfOut = tmp.resolve("nofrma-out.mp4");
+                check("无 frma 时减壳成功（子盒推断）",
+                        Mp4.stripEncryption(nfIn, nfOut), "");
+                if (Files.exists(nfOut)) {
+                    byte[] nb = Files.readAllBytes(nfOut);
+                    int nfStsd = indexOfType(nb, "stsd");
+                    String nfType = nfStsd >= 0
+                            ? new String(nb, nfStsd + 8 + 8 + 4, 4,
+                                    java.nio.charset.StandardCharsets.ISO_8859_1)
+                            : "?";
+                    check("无 frma 时按 hvcC 推断为 hvc1", "hvc1".equals(nfType), nfType);
+                }
+            }
+        } catch (Exception e) {
+            check("CENC 减壳", false, String.valueOf(e.getMessage()));
+        } finally {
+            if (tmp != null) deleteTree(tmp);
+        }
+    }
+
+    /** 探针用公开包装（临时）。 */
+    static byte[] dropBoxPub(byte[] enc, String type) {
+        return dropBox(enc, type);
+    }
+
+    /**
+     * 从盒树中删除指定类型的第一个盒，并同步修补祖先链尺寸（自底向上）。
+     * 删盒让 moov 缩小、mdat 前移，stco 的 chunk 偏移同步 -size。
+     */
+    private static byte[] dropBox(byte[] enc, String type) {
+        int pos = indexOfType(enc, type);
+        if (pos < 0) return null;
+        int size = (int) u32At(enc, pos);
+        List<Mp4.Box> chain = new ArrayList<>();
+        if (!findAncestors(Mp4.parseBoxes(enc, 0, enc.length), enc, pos, chain)) return null;
+        byte[] out = new byte[enc.length - size];
+        System.arraycopy(enc, 0, out, 0, pos);
+        System.arraycopy(enc, pos + size, out, pos, enc.length - pos - size);
+        for (Mp4.Box b : chain) {
+            putU32At(out, (int) b.start, u32At(out, (int) b.start) - size);
+        }
+        // mdat 整体前移 size，chunk 偏移同步左移；
+        // 注意删除点若在 stco 之前，stco 在 out 里的位置要 -size；
+        // offset 字段在盒起始 +16（盒头 8 + version/flags 4 + entry_count 4）
+        int stcoPos = indexOfType(enc, "stco");
+        if (stcoPos >= 0) {
+            int outStco = stcoPos > pos ? stcoPos - size : stcoPos;
+            putU32At(out, outStco + 16, u32At(enc, stcoPos + 16) - size);
+        }
+        return out;
+    }
+
+    /**
+     * 把夹具里的 stco 盒替换为等义 co64 盒（32 位偏移 -> 64 位），长度相应变化。
+     * 替换后必须把祖先链（stbl/minf/mdia/trak/moov）的声明尺寸同步 +grow，
+     * 并把 chunk 偏移 +grow（mdat 整体后移）——否则顶层按盒头跳跃会错位，
+     * 那样的文件本身就不自洽（会被减壳正确拒绝，但测不到 co64 路径）。
+     */
+    private static byte[] toCo64(byte[] enc) {
+        int stcoPos = indexOfType(enc, "stco");
+        if (stcoPos < 0) return null;
+        int oldSize = (int) u32At(enc, stcoPos);
+        int count = (int) u32At(enc, stcoPos + 12);
+        int newSize = 8 + 4 + 4 + 8 * count;
+        int grow = newSize - oldSize;
+        byte[] out = new byte[enc.length + grow];
+        System.arraycopy(enc, 0, out, 0, stcoPos);
+        // co64 头 + version/flags + entry_count
+        putU32At(out, stcoPos, newSize);
+        System.arraycopy("co64".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1),
+                0, out, stcoPos + 4, 4);
+        System.arraycopy(enc, stcoPos + 8, out, stcoPos + 8, 8); // v/f + count 原样
+        // 每个 32 位偏移零扩展成 64 位；mdat 整体后移 grow，偏移同步 +grow
+        for (int i = 0; i < count; i++) {
+            long v = u32At(enc, stcoPos + 16 + 4 * i);
+            putU64At(out, stcoPos + 16 + 8 * i, v + grow);
+        }
+        System.arraycopy(enc, stcoPos + oldSize, out, stcoPos + newSize,
+                enc.length - stcoPos - oldSize);
+        // 祖先链声明尺寸逐个 +grow（自底向上：stbl, minf, mdia, trak, moov）
+        List<Mp4.Box> chain = new ArrayList<>();
+        if (!findAncestors(Mp4.parseBoxes(enc, 0, enc.length), enc, stcoPos, chain)) return null;
+        for (Mp4.Box b : chain) {
+            putU32At(out, (int) b.start, u32At(out, (int) b.start) + grow);
+        }
+        return out;
+    }
+
+    /**
+     * 收集盒 pos 的严格祖先链（命中目标即停，目标自身不入链；自底向上返回）。
+     * 盒树把样本条目（encv/enca）当叶子，但它们固定头之后仍有子盒树；
+     * sinf 也可能不在容器白名单——这两种都要跳固定头/盒头继续下钻。
+     */
+    private static boolean findAncestors(List<Mp4.Box> boxes, byte[] enc, int pos,
+                                          List<Mp4.Box> chain) {
+        for (Mp4.Box b : boxes) {
+            if (b.start == pos) return true;
+            if (pos <= b.start || pos >= b.end()) continue;
+            List<Mp4.Box> kids = b.children;
+            int inner = -1;
+            if (b.type.equals("encv")) inner = (int) b.start + 8 + 78;
+            else if (b.type.equals("enca")) inner = (int) b.start + 8 + 28;
+            else if (b.type.equals("sinf")) inner = (int) b.start + 8;
+            if (kids.isEmpty() && inner >= 0) {
+                kids = Mp4.parseBoxes(enc, inner, b.end());
+            }
+            if (findAncestors(kids, enc, pos, chain)) {
+                chain.add(b);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static long u32At(byte[] b, int p) {
+        return ((long) (b[p] & 0xFF) << 24) | ((long) (b[p + 1] & 0xFF) << 16)
+             | ((long) (b[p + 2] & 0xFF) << 8) | (b[p + 3] & 0xFF);
+    }
+
+    private static long u64At(byte[] b, int p) {
+        long r = 0;
+        for (int i = 0; i < 8; i++) r = (r << 8) | (b[p + i] & 0xFF);
+        return r;
+    }
+
+    private static void putU32At(byte[] b, int p, long v) {
+        b[p] = (byte) (v >>> 24);
+        b[p + 1] = (byte) (v >>> 16);
+        b[p + 2] = (byte) (v >>> 8);
+        b[p + 3] = (byte) v;
+    }
+
+    private static void putU64At(byte[] b, int p, long v) {
+        for (int i = 0; i < 8; i++) b[p + i] = (byte) (v >>> (56 - 8 * i));
+    }
+
     // ==================== 入口 ====================
 
     /**
@@ -1009,6 +1296,7 @@ final class SelfTest {
             t.streamCacheLimit();
             t.searchPageSlice();
             t.appSource();
+            t.cencStrip();
         } catch (Exception e) {
             t.failed++;
             System.out.println("  ✗ 自检异常中断：" + e);

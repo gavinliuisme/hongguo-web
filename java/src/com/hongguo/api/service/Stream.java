@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *      -> 下载密文 mp4
  *      -> spade 解包 content key（纯字节变换）
  *      -> AES-128-CTR 全轨解密（视频+音频各用自身逐样本 IV）
- *      -> 可选 ffmpeg remux 剥离 CENC 信令成普通 mp4
+ *      -> 纯 Java 减壳剥离 CENC 信令成普通 mp4（布局不符时回落 ffmpeg remux）
  *      -> 缓存复用
  */
 public final class Stream {
@@ -141,7 +141,7 @@ public final class Stream {
      *
      * 内存策略（关键）：**全程不把整个 MP4 读进堆**。
      * 1) 16 字节盒头顺读定位 moov，仅把moov 段（几 MB）载入内存解析索引；
-     * 2) 流式 copy 密文 -> outPath；
+     * 2) 流式 copy 密文 -> outPath（调用方已把密文落在 outPath 时跳过）；
      * 3) 用 outPath 的随机读写句柄逐样本解密。
      * 因此峰值堆内存只与「moov 段大小 + 单个样本大小」有关，
      * 与视频总时长/文件大小无关（历史实现是 50~200MB/集，32 并发时会撑爆堆）。
@@ -178,8 +178,8 @@ public final class Stream {
         }
         if (video == null) video = analysis.tracks.get(0);
 
-        // ---- 2. 流式复制密文到 outPath ----
-        streamCopy(ctPath, outPath);
+        // ---- 2. 流式复制密文到 outPath（同路径时跳过：调用方已直接落在 outPath）----
+        if (!ctPath.equals(outPath)) streamCopy(ctPath, outPath);
 
         // ---- 3. 逐样本原地解密 ----
         int decrypted = 0;
@@ -208,8 +208,9 @@ public final class Stream {
             }
         }
 
-        // 尝试 remux 剥离 CENC 信令；无 ffmpeg 则保留已解密的原始容器
-        String playable = remuxPlayable(outPath);
+        // 尝试生成可播放成品：纯 Java 减壳，失败回落 ffmpeg remux；
+        // 两条路都失败则保留已解密的原始容器（raw），调用方按 raw 返回。
+        String playable = toPlayable(outPath);
 
         DecryptOut out = new DecryptOut();
         out.path = playable;
@@ -231,8 +232,18 @@ public final class Stream {
         }
     }
 
-    /** ffmpeg remux 结果（同步执行）。 */
-    private static String remuxPlayable(Path rawPath) {
+    /**
+     * 生成可播放成品（同步执行）。
+     *
+     * <p>默认路径：纯 Java 减壳（{@link Mp4#stripEncryption}）——样本数据此时
+     * 已是明文，只需从 moov 删掉加密信令盒（sinf/senc/saio/saiz/pssh）并把
+     * chunk 偏移平移过来，mdat 原样拷贝，**不依赖 ffmpeg**。
+     * 减壳不适用（布局异常等）或显式开启转码时，回落 ffmpeg remux；
+     * 两条路都失败返回 null，由调用方保留已解密的 raw 文件。
+     *
+     * <p>HONGGUO_PURE_STRIP=0 可强制走 ffmpeg（A/B 对比或应急回退）。
+     */
+    private static String toPlayable(Path rawPath) {
         Path parsed = rawPath;
         String name = parsed.getFileName().toString();
         String dir = parsed.getParent() == null ? "" : parsed.getParent().toString();
@@ -248,6 +259,21 @@ public final class Stream {
 
         // 转码默认关闭（HG_TRANSCODE=1 才开）
         boolean want = Config.bool("runtime.transcode", false);
+
+        // ---- 默认路径：纯 Java 减壳 ----
+        if (!want && !"0".equals(Log.env("HONGGUO_PURE_STRIP", ""))) {
+            try {
+                if (Mp4.stripEncryption(rawPath, out)) {
+                    deleteQuietly(rawPath);
+                    return out.toString();
+                }
+                Log.warn("纯 Java 减壳不适用，回落 ffmpeg remux："
+                        + rawPath.getFileName());
+            } catch (Exception e) {
+                Log.warn("纯 Java 减壳异常，回落 ffmpeg remux：" + e);
+            }
+        }
+
         Encoder enc = want ? h264Encoder() : null;
         if (want && enc == null) {
             Log.info("HG_TRANSCODE=1 但未找到可用的 H.264 编码器，本集退回 -c copy；"
@@ -271,20 +297,69 @@ public final class Stream {
         try {
             ProcessBuilder pb = new ProcessBuilder(cmd);
             pb.redirectErrorStream(true);
-            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            pb.redirectOutput(ProcessBuilder.Redirect.PIPE);
             Process p = pb.start();
-            boolean done = p.waitFor() == 0;
-            if (done && Files.exists(out) && Files.size(out) > 0) {
-                try {
-                    Files.deleteIfExists(rawPath);
-                } catch (IOException e) {
-                    // 忽略
+            // stderr 已合并进 stdout：限长收集（4KB），仅失败时用于诊断——
+            // 旧实现整段丢弃，remux 失败时控制台只剩「remux 失败」无线索。
+            final byte[] errBuf = new byte[4096];
+            final int[] errLen = new int[1];
+            Thread drain = new Thread(() -> {
+                try (InputStream es = p.getInputStream()) {
+                    int n;
+                    while (errLen[0] < errBuf.length
+                            && (n = es.read(errBuf, errLen[0],
+                                    errBuf.length - errLen[0])) > 0) {
+                        errLen[0] += n;
+                    }
+                    // 超出 4KB 的部分读掉即可，防止管道写满挂死 ffmpeg
+                    while (es.read() >= 0) {
+                        // discard
+                    }
+                } catch (IOException ignore) {
+                    // 进程被强杀时管道读失败属正常
                 }
-                return out.toString();
+            }, "ffmpeg-drain");
+            drain.setDaemon(true);
+            drain.start();
+
+            boolean exited;
+            try {
+                exited = p.waitFor(60, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException ie) {
+                p.destroyForcibly();
+                Thread.currentThread().interrupt();
+                return null;
             }
-            return null;
+            if (!exited) {
+                // 无超时的 waitFor 会让卡死的 ffmpeg 永久挂住请求线程
+                p.destroyForcibly();
+                Log.warn("ffmpeg remux 超时（60s）已强杀：" + rawPath.getFileName());
+                return null;
+            }
+            drain.join(2000);
+
+            boolean ok = p.exitValue() == 0 && Files.exists(out) && Files.size(out) > 0;
+            if (!ok) {
+                String detail =
+                        new String(errBuf, 0, errLen[0], StandardCharsets.UTF_8).trim();
+                Log.warn("ffmpeg remux 失败（" + rawPath.getFileName() + "）"
+                        + (detail.isEmpty() ? "" : "：" + detail));
+                return null;
+            }
+            deleteQuietly(rawPath);
+            return out.toString();
         } catch (Exception e) {
+            Log.warn("ffmpeg remux 异常（" + rawPath.getFileName() + "）：" + e);
             return null;
+        }
+    }
+
+    /** 删除文件，失败仅忽略（调用方都已有兜底路径）。 */
+    private static void deleteQuietly(Path f) {
+        try {
+            Files.deleteIfExists(f);
+        } catch (IOException ignore) {
+            // 忽略
         }
     }
 
@@ -400,9 +475,9 @@ public final class Stream {
 
         String hit = cachedPath(vid, quality);
         if (hit != null) {
-            // 只有残留的 raw（缺 play 成品）才需要补一次 remux
+            // 只有残留的 raw（缺 play 成品）才需要补一次减壳/remux
             if (!hit.equals(p.raw.toString())) return hit;
-            String r = remuxPlayable(p.raw);
+            String r = toPlayable(p.raw);
             if (r != null) return r;
         }
 
@@ -428,23 +503,16 @@ public final class Stream {
                 pruneCache();
                 return p.out.toString();
             }
-            Path ct = Paths.get(p.out + ".enc");
-            download(t.url, ct);
-            try {
-                DecryptOut r = offlineDecrypt(t.spadeA, ct, p.raw);
-                // remux 成功时返回 .play.mp4，失败时回退 raw
-                String res = (r.path != null) ? r.path : p.raw.toString();
-                task.complete(res);
-                // 落盘完成后再清理：此时 play/raw 已是成品，不会误删半成品
-                pruneCache();
-                return res;
-            } finally {
-                try {
-                    Files.deleteIfExists(ct);
-                } catch (IOException e) {
-                    // 忽略
-                }
-            }
+            // 密文直接落在 raw 路径：offlineDecrypt 原地解密后原地减壳，
+            // 省去旧实现里 .enc -> raw 的那次整文件拷贝（13MB/集的纯浪费）。
+            download(t.url, p.raw);
+            DecryptOut r = offlineDecrypt(t.spadeA, p.raw, p.raw);
+            // 减壳/remux 成功时返回 .play.mp4，失败时回退 raw
+            String res = (r.path != null) ? r.path : p.raw.toString();
+            task.complete(res);
+            // 落盘完成后再清理：此时 play/raw 已是成品，不会误删半成品
+            pruneCache();
+            return res;
         } catch (Exception e) {
             task.fail(e);
             throw e;

@@ -2,8 +2,15 @@ package com.hongguo.api.core;
 
 import com.hongguo.api.util.Crypto;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -893,5 +900,417 @@ public final class Mp4 {
             if (tested > 0 && ok == tested) return cand;
         }
         return null;
+    }
+
+    // ==================== 剥离 CENC 信令（纯 Java 减壳） ====================
+
+    /**
+     * 视觉样本条目类型（VisualSampleEntry，固定头 78 字节）。
+     * encv 为加密视频条目；其余为常见明文视频条目（万一信令已除也认得）。
+     */
+    private static final Set<String> VISUAL_ENTRY = new HashSet<>(java.util.Arrays.asList(
+            "encv", "hvc1", "hev1", "avc1", "av01", "mp4v", "vp08", "vp09", "dvav", "dva1"));
+
+    /**
+     * 音频样本条目类型（AudioSampleEntry，QuickTime 布局固定头 28 字节）。
+     */
+    private static final Set<String> AUDIO_ENTRY = new HashSet<>(java.util.Arrays.asList(
+            "enca", "mp4a", "ac-3", "ec-3", "Opus", "fLaC", "samr", "sawb"));
+
+    /** 样本条目固定头长度；未知类型返回 -1（调用方应放弃剥离）。 */
+    private static int entryFixedHeader(String type) {
+        if (VISUAL_ENTRY.contains(type)) return 78;
+        if (AUDIO_ENTRY.contains(type)) return 28;
+        return -1;
+    }
+
+    /**
+     * 剥离 CENC 加密信令，产出普通 mp4 —— 纯 Java 实现，不依赖 ffmpeg。
+     *
+     * <p>前提：样本数据（mdat）已是解密后的明文（由 offlineDecrypt 完成），
+     * 加密信令全部位于 moov：
+     * <ul>
+     *   <li>stsd 样本条目（encv/enca）内的 {@code sinf}（frma/schm/schi>tenc）；</li>
+     *   <li>stbl 内的 {@code senc}/{@code saio}/{@code saiz}（逐样本 IV 与索引）；</li>
+     *   <li>moov 直属的 {@code pssh}（DRM 系统声明，若有）。</li>
+     * </ul>
+     * {@code sgpd}/{@code sbgp} 一律保留：实测本项目的是 {@code roll} 音频分组，
+     * 与加密无关（ffmpeg remux 也同样保留）。
+     *
+     * <p>剥离后 moov 变小，其后所有绝对偏移（stco/co64 的 chunk 偏移）必须统一
+     * 左移 delta，因此要求「全部 chunk 偏移都落在 moov 之后」。布局不符时
+     * （moov 在尾部、偏移越界、64 位盒、未知条目类型、双 moov 等）返回 false，
+     * 由调用方回落 ffmpeg —— 宁可多走一次外部进程，不可产出错位文件。
+     *
+     * @return true 表示 out 已写好且通过自校验（盒链完整、加密信令除净）
+     */
+    public static boolean stripEncryption(Path in, Path out) {
+        try {
+            return strip0(in, out);
+        } catch (Exception ignore) {
+            // 任何意外都视为「布局不符」，由调用方回落 ffmpeg
+            return false;
+        }
+    }
+
+    private static boolean strip0(Path in, Path out) throws Exception {
+        long fileLen = Files.size(in);
+        if (fileLen < 16) return false;
+
+        // ---- 1. 只读盒头摸清顶层布局：ftyp / .. / moov / [free|skip]* / mdat ----
+        byte[] hdr = new byte[16];
+        long moovStart = -1, moovEnd = -1, mdatStart = -1, mdatHeaderSize = 8;
+        boolean ftypFirst = false;
+        long p = 0;
+        try (RandomAccessFile raf = new RandomAccessFile(in.toFile(), "r")) {
+            while (p + 8 <= fileLen) {
+                raf.seek(p);
+                raf.readFully(hdr, 0, 8);
+                long size = u32b(hdr, 0);
+                String type = new String(hdr, 4, 4, StandardCharsets.ISO_8859_1);
+                int hs = 8;
+                if (size == 1) {
+                    raf.readFully(hdr, 8, 8);
+                    size = u64b(hdr, 8);
+                    hs = 16;
+                } else if (size == 0) {
+                    size = fileLen - p;
+                }
+                if (size < hs || p + size > fileLen) return false;
+                if (p == 0) {
+                    if (!type.equals("ftyp")) return false;
+                    ftypFirst = true;
+                }
+                if (type.equals("moov")) {
+                    if (moovStart >= 0) return false; // 双 moov：布局意外，放弃
+                    moovStart = p;
+                    moovEnd = p + size;
+                } else if (type.equals("mdat")) {
+                    mdatStart = p;
+                    mdatHeaderSize = hs;
+                    break;
+                }
+                p += size;
+            }
+            if (!ftypFirst || moovStart < 0 || mdatStart < 0 || mdatStart < moovEnd) {
+                return false; // 无 moov、moov 在 mdat 之后（尾部 moov 形态）等
+            }
+            // moov 与 mdat 之间只允许 free / skip（ffmpeg 的 faststart 对齐盒）
+            long q = moovEnd;
+            while (q < mdatStart) {
+                raf.seek(q);
+                raf.readFully(hdr, 0, 8);
+                long size = u32b(hdr, 0);
+                String type = new String(hdr, 4, 4, StandardCharsets.ISO_8859_1);
+                int hs = 8;
+                if (size == 1) {
+                    raf.readFully(hdr, 8, 8);
+                    size = u64b(hdr, 8);
+                    hs = 16;
+                } else if (size == 0) {
+                    return false; // 中段盒不允许延伸到文件尾
+                }
+                if (size < hs || q + size > mdatStart) return false;
+                if (!type.equals("free") && !type.equals("skip")) return false;
+                q += size;
+            }
+
+            // ---- 2. 读入头部段（ftyp .. mdat 盒头，含盒头本身）在内存中修补 ----
+            int headLen = (int) (mdatStart + mdatHeaderSize);
+            if (headLen > 64 * 1024 * 1024) return false; // moov 异常巨大，放弃
+            byte[] head = new byte[headLen];
+            raf.seek(0);
+            raf.readFully(head);
+
+            // 解析终点取 mdatStart：head 里 mdat 只有盒头（负载不在段内），
+            // 声明尺寸会越界，整段解析会在 mdat 处中断。
+            int parseEnd = (int) mdatStart;
+            List<Box> top = parseBoxes(ByteView.whole(head), 0, parseEnd);
+            Box moov = null;
+            for (Box b : top) {
+                if (b.type.equals("moov")) { moov = b; break; }
+            }
+            if (moov == null) return false;
+            if (top.get(top.size() - 1).end() != parseEnd) return false; // 盒链不收尾
+
+            // ---- 3. 剥离加密信令，沿途修补各层盒尺寸 ----
+            List<long[]> removals = new ArrayList<>();
+            long delta = pruneEncryption(head, moov, removals);
+            if (delta <= 0) return false; // 没有加密信令可剥，交回 ffmpeg 保持原行为
+
+            // ---- 4. chunk 偏移统一左移 delta（全部条目必须落在 moov 之后）----
+            for (Box trak : moov.children) {
+                if (!trak.type.equals("trak")) continue;
+                Box mdia = trak.child("mdia");
+                Box stbl = mdia == null ? null : mdia.child("minf") == null
+                        ? null : mdia.child("minf").child("stbl");
+                if (stbl == null) continue;
+                patchChunkOffsets(head, stbl, "stco", 4, delta, moovEnd);
+                patchChunkOffsets(head, stbl, "co64", 8, delta, moovEnd);
+            }
+
+            // ---- 5. 写出：head 跳过移除段 + mdat 负载从源文件流式拷贝 ----
+            removals.sort(Comparator.comparingLong(a -> a[0]));
+            for (int i = 1; i < removals.size(); i++) {
+                if (removals.get(i)[0] < removals.get(i - 1)[1]) return false; // 重叠即异常
+            }
+            long mdatPayload = mdatStart + mdatHeaderSize;
+            try (OutputStream os = Files.newOutputStream(out)) {
+                long copied = 0;
+                for (long[] r : removals) {
+                    os.write(head, (int) copied, (int) (r[0] - copied));
+                    copied = r[1];
+                }
+                os.write(head, (int) copied, headLen - (int) copied);
+                try (InputStream is = Files.newInputStream(in)) {
+                    long toSkip = mdatPayload;
+                    while (toSkip > 0) {
+                        long n = is.skip(toSkip);
+                        if (n <= 0) {
+                            if (is.read() < 0) return false; // 源文件比预期短
+                            toSkip--;
+                        } else {
+                            toSkip -= n;
+                        }
+                    }
+                    copyStream(is, os, fileLen - mdatPayload);
+                }
+            }
+
+            // ---- 6. 自校验：回读输出的头部段，验证真正交付的文件 ----
+            // （不能校验内存里的 head：那是压缩前的布局，尺寸链不可能收尾）
+            long outLen = Files.size(out);
+            long outMdatStart = mdatStart - delta;
+            if (outLen != fileLen - delta) return false;
+            int verifyLen = (int) (outMdatStart + 8);
+            byte[] vhead = new byte[verifyLen];
+            try (RandomAccessFile raf2 = new RandomAccessFile(out.toFile(), "r")) {
+                raf2.readFully(vhead);
+            }
+            List<Box> chk = parseBoxes(ByteView.whole(vhead), 0, (int) outMdatStart);
+            if (chk.isEmpty()) return false;
+            if (!chk.get(0).type.equals("ftyp")) return false;
+            if (chk.get(chk.size() - 1).end() != outMdatStart) return false;
+            if (u32b(vhead, (int) outMdatStart) != outLen - outMdatStart) return false;
+            Box moov2 = null;
+            for (Box b : chk) {
+                if (b.type.equals("moov")) { moov2 = b; break; }
+            }
+            if (moov2 == null) return false;
+            for (Box trak : moov2.children) {
+                if (!trak.type.equals("trak")) continue;
+                Box mdia = trak.child("mdia");
+                Box stbl = mdia == null ? null : mdia.child("minf") == null
+                        ? null : mdia.child("minf").child("stbl");
+                if (stbl == null) continue;
+                for (String t : new String[]{"senc", "saio", "saiz"}) {
+                    if (stbl.child(t) != null) return false;
+                }
+                Box stsd = stbl.child("stsd");
+                if (stsd != null) {
+                    for (Box e : stsd.children) {
+                        // 条目类型必须已改回普通类型（encv/enca 是加密专用）
+                        if (!isPlainEntryType(e.type)) return false;
+                        int fh = entryFixedHeader(e.type);
+                        if (fh < 0) return false;
+                        List<Box> kids =
+                                parseBoxes(ByteView.whole(vhead), e.start + 8 + fh, e.end());
+                        for (Box c : kids) {
+                            if (c.type.equals("sinf")) return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 递归剥离加密信令，返回从 box 子树中移除的字节总数；
+     * 沿途就地修补各层盒的 32 位尺寸字段（head 下标即文件绝对偏移）。
+     *
+     * 只删三类盒：stbl 直属的 senc/saio/saiz、stsd 条目内的 sinf、
+     * moov 直属的 pssh。遇到 64 位尺寸盒或未知样本条目类型即抛错
+     * （上层捕获后放弃剥离）——修补逻辑只覆盖 32 位尺寸这一种形态。
+     */
+    private static long pruneEncryption(byte[] head, Box box, List<long[]> removals) {
+        long removed = 0;
+        if (box.type.equals("stbl")) {
+            for (Box c : new ArrayList<>(box.children)) {
+                if (c.type.equals("senc") || c.type.equals("saio") || c.type.equals("saiz")) {
+                    removals.add(new long[]{c.start, c.end()});
+                    removed += c.size;
+                    box.children.remove(c);
+                }
+            }
+        } else if (box.type.equals("moov")) {
+            for (Box c : new ArrayList<>(box.children)) {
+                if (c.type.equals("pssh")) {
+                    removals.add(new long[]{c.start, c.end()});
+                    removed += c.size;
+                    box.children.remove(c);
+                }
+            }
+        } else if (box.type.equals("stsd")) {
+            // stsd 的子盒是样本条目（parseBoxes 按叶子处理），
+            // 需按条目类型跳固定头后才能看到 sinf。
+            for (Box entry : box.children) {
+                int fh = entryFixedHeader(entry.type);
+                if (fh < 0) {
+                    throw new IllegalStateException("未知样本条目类型: " + entry.type);
+                }
+                List<Box> kids =
+                        parseBoxes(ByteView.whole(head), entry.start + 8 + fh, entry.end());
+                long er = 0;
+                for (Box c : kids) {
+                    if (c.type.equals("sinf")) {
+                        removals.add(new long[]{c.start, c.end()});
+                        er += c.size;
+                        // 删信令的同时把条目类型从 encv/enca 改回原始类型
+                        // （frma 权威记录，解码配置子盒兜底推断）——
+                        // 否则条目仍是 CENC 加密类型，播放器不认
+                        rewriteEntryType(head, entry, c);
+                    } else {
+                        er += pruneEncryption(head, c, removals);
+                    }
+                }
+                if (er > 0) {
+                    patchBoxSize(head, entry, entry.size - er);
+                    removed += er;
+                }
+            }
+            // stsd 自身也随条目一起缩小（调用方只按返回值修上层盒，
+            // 不会穿透到 stsd——漏了这步盒链会在 stsd 处断裂）
+            if (removed > 0) patchBoxSize(head, box, box.size - removed);
+            return removed;
+        }
+        for (Box c : box.children) {
+            removed += pruneEncryption(head, c, removals);
+        }
+        if (removed > 0) patchBoxSize(head, box, box.size - removed);
+        return removed;
+    }
+
+    /**
+     * 把样本条目的类型从加密类型（encv/enca）改写回原始类型。
+     * 权威来源是 sinf 内 frma 盒的 data_format（加密前的条目类型）；
+     * frma 缺失或不可识别时按条目内的解码配置子盒推断
+     * （hvcC→hvc1、avcC→avc1、av1C→av01、esds→mp4a）；
+     * 都判不出则抛错放弃剥离——类型写错比不剥更糟。
+     */
+    private static void rewriteEntryType(byte[] head, Box entry, Box sinf) {
+        String nt = plainEntryType(head, entry, sinf);
+        if (nt == null) {
+            throw new IllegalStateException("无法确定样本条目原始类型，放弃剥离: " + entry.type);
+        }
+        byte[] tb = nt.getBytes(StandardCharsets.ISO_8859_1);
+        System.arraycopy(tb, 0, head, (int) entry.start + 4, 4);
+    }
+
+    /** 推断样本条目的原始（非加密）类型；判不出返回 null。 */
+    private static String plainEntryType(byte[] head, Box entry, Box sinf) {
+        // 1. sinf 内 frma 的 data_format：加密前的原始条目类型（权威）
+        List<Box> inner = parseBoxes(ByteView.whole(head), sinf.start + 8, sinf.end());
+        for (Box b : inner) {
+            if (b.type.equals("frma") && b.size >= 12 && b.headerSize == 8) {
+                String f = new String(head, (int) b.start + 8, 4,
+                        StandardCharsets.ISO_8859_1);
+                if (isPlainEntryType(f)) return f;
+            }
+        }
+        // 2. 按解码配置子盒推断
+        List<Box> kids = parseBoxes(ByteView.whole(head),
+                entry.start + 8 + entryFixedHeader(entry.type), entry.end());
+        for (Box b : kids) {
+            switch (b.type) {
+                case "hvcC": return "hvc1";
+                case "avcC": return "avc1";
+                case "av1C": return "av01";
+                case "esds": return "mp4a";
+                default: break;
+            }
+        }
+        return null;
+    }
+
+    /** 是否为普通（非加密）样本条目类型。 */
+    private static boolean isPlainEntryType(String t) {
+        return !t.equals("encv") && !t.equals("enca")
+                && (VISUAL_ENTRY.contains(t) || AUDIO_ENTRY.contains(t));
+    }
+
+    /** 就地修补盒的 32 位尺寸字段；64 位盒直接抛错（放弃剥离）。 */
+    private static void patchBoxSize(byte[] head, Box box, long newSize) {
+        if (box.headerSize != 8) {
+            throw new IllegalStateException("64 位盒尺寸，放弃剥离: " + box.type);
+        }
+        if (newSize < 8 || newSize > 0xFFFFFFFFL) {
+            throw new IllegalStateException("盒尺寸越界，放弃剥离: " + box.type);
+        }
+        putU32(head, (int) box.start, newSize);
+    }
+
+    /**
+     * 把 stco/co64 的全部 chunk 偏移左移 delta。
+     * 任一条目落在 moovEnd 之前（不该发生）即抛错——布局不符时整体放弃剥离。
+     */
+    private static void patchChunkOffsets(byte[] head, Box stbl, String type, int width,
+                                          long delta, long moovEnd) {
+        Box b = stbl.child(type);
+        if (b == null) return;
+        if (b.headerSize != 8) {
+            throw new IllegalStateException("64 位偏移盒，放弃剥离: " + type);
+        }
+        long p = b.start + 12; // 跳过盒头(8) + version/flags(4)
+        int n = (int) u32b(head, (int) p);
+        p += 4; // entry_count
+        if (n < 0 || p + (long) n * width > b.end()) {
+            throw new IllegalStateException("偏移表长度异常，放弃剥离: " + type);
+        }
+        for (int i = 0; i < n; i++) {
+            long v = width == 4 ? u32b(head, (int) p) : u64b(head, (int) p);
+            if (v < moovEnd) {
+                throw new IllegalStateException("chunk 偏移落在 moov 之前，放弃剥离");
+            }
+            if (width == 4) putU32(head, (int) p, v - delta);
+            else putU64(head, (int) p, v - delta);
+            p += width;
+        }
+    }
+
+    /** 从 is 拷贝恰好 len 字节到 os（短读/短写都补齐，源不足则抛错）。 */
+    private static void copyStream(InputStream is, OutputStream os, long len)
+            throws IOException {
+        byte[] buf = new byte[65536];
+        long left = len;
+        while (left > 0) {
+            int want = (int) Math.min(buf.length, left);
+            int n = is.read(buf, 0, want);
+            if (n < 0) throw new IOException("源文件在读流中提前结束");
+            os.write(buf, 0, n);
+            left -= n;
+        }
+    }
+
+    private static long u32b(byte[] b, int p) {
+        return ((long) (b[p] & 0xFF) << 24) | ((long) (b[p + 1] & 0xFF) << 16)
+             | ((long) (b[p + 2] & 0xFF) << 8) | (b[p + 3] & 0xFF);
+    }
+
+    private static long u64b(byte[] b, int p) {
+        long r = 0;
+        for (int i = 0; i < 8; i++) r = (r << 8) | (b[p + i] & 0xFF);
+        return r;
+    }
+
+    private static void putU32(byte[] b, int p, long v) {
+        b[p] = (byte) (v >>> 24);
+        b[p + 1] = (byte) (v >>> 16);
+        b[p + 2] = (byte) (v >>> 8);
+        b[p + 3] = (byte) v;
+    }
+
+    private static void putU64(byte[] b, int p, long v) {
+        for (int i = 0; i < 8; i++) b[p + i] = (byte) (v >>> (56 - 8 * i));
     }
 }

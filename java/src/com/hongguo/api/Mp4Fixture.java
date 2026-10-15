@@ -222,15 +222,22 @@ final class Mp4Fixture {
                     new byte[]{16},                  // default_Per_Sample_IV_Size = 16
                     KID));
             byte[] schi = box("schi", tenc);
-            byte[] sinf = box("sinf", concat(schm, schi));
+            // frma：记录加密前的原始条目类型。真实 CENC 文件必有此盒，
+            // 减壳时靠它把 encv/enca 改回 hvc1/mp4a——只删 sinf 不改类型，
+            // 播放器会把条目当加密流而拒绝解码（ffprobe codec_name 为 null）。
+            byte[] frma = box("frma", "hvc1".getBytes("ISO-8859-1"));
+            byte[] sinf = box("sinf", concat(frma, schm, schi));
 
             // sinf 必须挂在 sample entry（encv）内，而不是 stbl 直接子级 ——
             // 这才是真实 CENC 文件的层级。stbl 只认CONTAINERS 白名单里的盒型，
             // 写成 stbl 的直接子级会导致 sinf.children 为空、tenc 读不到。
             // encv 布局：6 字节 reserved + 2 字节 data_ref_index
             //            + VisualSampleEntry 字段(70) + 子盒
+            // 子盒除 sinf 外还带 hvcC（HEVC 解码配置）——真实加密条目即如此，
+            // 减壳在 frma 缺失时靠它兜底推断原始类型。
+            byte[] hvcC = box("hvcC", new byte[32]);
             byte[] encv = box("encv", concat(
-                    new byte[6], u16(1), new byte[70], sinf));
+                    new byte[6], u16(1), new byte[70], hvcC, sinf));
 
             byte[] stsd = box("stsd", concat(
                     new byte[]{0, 0, 0, 0},
