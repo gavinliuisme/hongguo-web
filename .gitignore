@@ -156,24 +156,19 @@ vite.config.ts.timestamp-*
 # 密钥同存于 apikeys.json，均为本机长期状态
 /server/config/apikeys.json
 
-# ---------- Java 后端（Node 已迁移为 Java） ----------
-# 构建产物不入库：java/build/ 是 javac 中间产物，java/dist/ 是编译出的 JAR。
-# 两者都由 scripts/build-java.sh 生成；pack.sh 打包前会先跑一次构建，
-# 因此发行包里照样自带 JAR —— 使用者不需要 JDK，也用不到构建脚本
-# （build-java 同样不随发行包分发，见 pack.sh）。
-/java/build/
-/java/dist/
+# ---------- Node 后端 ----------
+# Node 后端是纯 JS 源码，直接 node 运行，没有编译产物需要忽略
+# （Java 时代的 java/build/ 与 java/dist/ 已随迁移移除）。
 
 # pack.sh 的打包产物（5 个平台的发行 zip，约 450MB）落在仓库根的 dist/。
-# 上文第 84 行的 `/dist` 已锚定根目录并覆盖此处，此处补充说明以防误删：
-# 该规则只匹配根目录的 dist/，不会误伤需要入库的 java/dist/。
+# 上文第 84 行的 `/dist` 已锚定根目录并覆盖此处，此处补充说明以防误删。
 /dist/
 
-# ---------- Java 运行时 ----------
-# JRE 不再随仓库入库：仓库体积曾因此达到 296MB，而克隆者多数并不需要它。
-# 发行包由 scripts/pack.sh 动态下载对应平台的 JRE 并打入包内，开箱即用；
-# 从源码运行时则依赖系统 Java，或自行把 JRE 解压到 jre/（启动脚本会自动发现）。
-/jre/
+# ---------- Node 运行时 ----------
+# Node 运行时不再随仓库入库：仓库体积曾因此达到 296MB，而克隆者多数并不需要它。
+# 发行包由 scripts/pack.sh 动态下载对应平台的 Node 并打入包内，开箱即用；
+# 从源码运行时则依赖系统 Node，或自行把 Node 解压到 node/（启动脚本会自动发现）。
+/node/
 
-# pack.sh 下载的 JRE 缓存（约 250MB / 5 个平台），纯本地中间产物
+# pack.sh 下载的 Node 运行时缓存（约 250MB / 5 个平台），纯本地中间产物
 /.pack-cache/

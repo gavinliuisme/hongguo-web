@@ -11,33 +11,30 @@
 @rem  the byte-offset bookkeeping and start printing lines twice.
 @rem
 @rem  So this file does not parse JSON, does not scan processes, and
-@rem  does not check ports. It hands "--stop" to the jar and lets the
-@rem  Java side do the work: the ports it reports on come from
+@rem  does not check ports. It hands "--stop" to main.js and lets the
+@rem  Node side do the work: the ports it reports on come from
 @rem  server\config\config.json, and reading that here would mean
 @rem  keeping a second copy of the config parser in cmd.
 @rem ================================================================
 
 @cd /d "%~dp0.."
 
-set "JAR=java\dist\hongguo-api.jar"
+set "ENTRY=server\src\main.js"
 
-@rem --- locate a JRE -------------------------------------------------
-@rem Needed only to run the jar. Same order as Java's Launcher.findJava:
-@rem the bundled jre\ wins over JAVA_HOME, which wins over PATH.
-set "JAVA_BIN="
-if exist "jre\bin\java.exe" set "JAVA_BIN=%CD%\jre\bin\java.exe"
-if not defined JAVA_BIN for /d %%d in ("jre\*") do @if not defined JAVA_BIN if exist "%%~fd\bin\java.exe" set "JAVA_BIN=%%~fd\bin\java.exe"
-if not defined JAVA_BIN if defined JAVA_HOME if exist "%JAVA_HOME%\bin\java.exe" set "JAVA_BIN=%JAVA_HOME%\bin\java.exe"
-if not defined JAVA_BIN for %%p in (java.exe) do set "JAVA_BIN=%%~$PATH:p"
-if not defined JAVA_BIN goto :need_jre
+@rem --- locate a Node runtime ---------------------------------------
+set "NODE_BIN="
+if exist "node\node.exe" set "NODE_BIN=%CD%\node\node.exe"
+if not defined NODE_BIN if defined NODE_HOME if exist "%NODE_HOME%\node.exe" set "NODE_BIN=%NODE_HOME%\node.exe"
+if not defined NODE_BIN for %%p in (node.exe) do set "NODE_BIN=%%~$PATH:p"
+if not defined NODE_BIN goto :need_node
 
-if not exist "%JAR%" goto :no_jar
+if not exist "%ENTRY%" goto :no_entry
 goto :run
 
 :run
 @rem --stop always exits 0: "stopped it" and "nothing was running"
 @rem are both normal outcomes of an idempotent stop.
-"%JAVA_BIN%" -jar "%JAR%" --stop
+"%NODE_BIN%" "%ENTRY%" --stop
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" goto :failed
 echo.
@@ -53,18 +50,18 @@ echo.
 pause
 exit /b %RC%
 
-:need_jre
+:need_node
 echo.
-echo   No Java runtime found, so there is no way to run the stop command.
+echo   No Node runtime found, so there is no way to run the stop command.
 echo   If services are running you can end them by hand: open Task Manager,
-echo   select any "java.exe" started from this folder, and end the task.
+echo   select any "node.exe" started from this folder, and end the task.
 echo.
 pause
 exit /b 1
 
-:no_jar
+:no_entry
 echo.
-echo   Missing %CD%\%JAR%
+echo   Missing %CD%\%ENTRY%
 echo.
 echo   Nothing to stop through this script. If the service is running from
 echo   another copy of the project, stop it there instead.
