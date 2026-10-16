@@ -268,9 +268,8 @@ public final class Launcher {
         System.out.printf("    api.port       : %d%n", Config.num("api.port", 8000));
         System.out.printf("    签名方式       : %s%n", "本地纯代码签名（PureSign，内置）");
         System.out.printf("    transcode      : %s%n", Config.bool("runtime.transcode", false));
-        // data_dir 只承载视频缓存（落在 server/stream-cache）；设备身份
-        // （device.json）与密钥（apikeys.json）固定位于 server/config，
-        // 不随本项迁移。
+        // data_dir 只承载视频缓存（落在 server/stream-cache）；设备身份与
+        // 密钥（均落在 apikeys.json）固定位于 server/config，不随本项迁移。
         System.out.printf("    data_dir(视频缓存) : %s%n",
                 Config.str("runtime.data_dir", "server"));
         System.out.println("  " + "-".repeat(56));

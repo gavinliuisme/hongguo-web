@@ -84,7 +84,7 @@ public final class Config {
     private static final String MANIFEST_VERSION_KEY = "Implementation-Version";
 
     private static Map<String, Object> load() {
-        // 允许用环境变量直接指定配置文件路径（与 HONGGUO_CONTENT_CONFIG 同一套用法）
+        // 允许用环境变量直接指定配置文件路径（HONGGUO_CONFIG）
         String custom = Log.env("HONGGUO_CONFIG", null);
         List<String> candidates = new ArrayList<>();
         if (custom != null) candidates.add(custom);

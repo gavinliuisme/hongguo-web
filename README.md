@@ -380,10 +380,9 @@ curl -H "x-api-key: <key>" \
 | `RATE_PER_MIN` | `120` | 每分钟请求上限（限流） | 无，仅环境变量 |
 | `HG_THROTTLE_MS` | `260` | 上游请求串行节流间隔（毫秒） | `runtime.throttle_ms` |
 | `DEVICE_POOL_SIZE` | `0` | 设备身份池大小，0 为关闭 | 无，仅环境变量 |
-| `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `content-config.json` 的 `api_host`） |
-| `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `content-config.json` 的 `session_headers.user-agent`） |
-| `HONGGUO_CONTENT_CONFIG` | `server/config/content-config.json` | 基础查询参数配置 | 无，仅环境变量 |
-| `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；`device.json` 与 `apikeys.json` 固定位于 `server/config`，不随本项迁移） | `runtime.data_dir` |
+| `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `config.json` 的 `upstream.api_host`） |
+| `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `config.json` 的 `upstream.session_headers.user-agent`） |
+| `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项迁移） | `runtime.data_dir` |
 | `HONGGUO_STREAM_CACHE` | `server/stream-cache` | 解密成品缓存 | 无，仅环境变量 |
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
@@ -506,10 +505,8 @@ hongguo-web/
 │   └── build/                 编译中间产物
 ├── jre/                       Java 运行时（仅发行包内有；仓库不含）
 ├── server/
-│   ├── config/config.json      启动配置（端口、监听地址、调优参数）
-│   ├── config/content-config.json  上游配置与 base_query
-│   ├── config/apikeys.json     管理口令等（首次启动自动生成，不入库）
-│   ├── config/device.json      设备标识（首次启动自动生成，不入库）
+│   ├── config/config.json      启动配置（端口、监听、调优参数、上游接口参数 upstream 段）
+│   ├── config/apikeys.json     链路密钥、管理口令与 device_id（首次启动自动生成，不入库）
 │   └── stream-cache/           解密成品缓存（运行时生成，不入库）
 └── web/                       前端静态资源（可直接浏览器打开）
     ├── index.html
@@ -525,7 +522,7 @@ hongguo-web/
 
 A：按顺序排查：
 
-1. 确认 `server/config/device.json` 存在且内容合法：
+1. 确认 `server/config/apikeys.json` 存在且内容合法（`device_id` 与密钥同存此文件）：
 
    ```json
    { "device_id": "7091873872252626" }
@@ -543,8 +540,8 @@ A：按顺序排查：
 > **不要手动加 `iid`**：实测 `device_id` 搭配一个随机 `iid` 会被风控拦截，
 > 返回 HTTP 200 但 body 为空。修复方案因此只生成 `device_id`。
 
-`device_id` 相当于本机的设备指纹，**请勿随意删除或改动** `device.json`：
-短时间内身份跳变会被上游判定为异常流量。
+`device_id` 相当于本机的设备指纹，**请勿随意删除或改动** `apikeys.json` 里的
+`device_id`：短时间内身份跳变会被上游判定为异常流量。
 
 **Q：首播为什么慢？第二集为什么还要等一会儿？**
 

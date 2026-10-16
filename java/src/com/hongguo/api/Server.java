@@ -45,7 +45,7 @@ import java.util.regex.Pattern;
  */
 public class Server {
 
-    private final KeyStore keys = new KeyStore();
+    private final KeyStore keys = KeyStore.store();
     private final String adminToken;
     /** 管理口令是否为本次启动新生成（文件里原本没有，或环境变量未设置）。 */
     private final boolean adminTokenFresh;

@@ -381,8 +381,31 @@ final class SelfTest {
                 id.source != null && !id.source.isEmpty(), id.source);
         check("已注入 base_query",
                 Client.baseQuery().get("device_id").equals(id.deviceId), "");
-        check("device.json 已落盘",
-                Files.exists(com.hongguo.api.core.Device.storeFile()), id.source);
+        // upstream.base_query / session_headers 的注释键（_说明）不得泄漏：
+        // 这两块是整体透传进上游 query 与请求头的
+        boolean noUnderscoreQ = true;
+        for (String k : Client.baseQuery().keySet()) {
+            if (k.startsWith("_")) noUnderscoreQ = false;
+        }
+        check("base_query 无注释键泄漏", noUnderscoreQ, "");
+        boolean noUnderscoreH = true;
+        for (String k : Client.sessionHeaders().keySet()) {
+            if (k.startsWith("_")) noUnderscoreH = false;
+        }
+        check("session_headers 无注释键泄漏", noUnderscoreH, "");
+        check("device_id 已写入 apikeys.json（单例）",
+                com.hongguo.api.core.KeyStore.store().deviceId().equals(id.deviceId),
+                id.source);
+        // 文件内容级复核：不只看内存单例，落盘内容里也要有该值
+        try {
+            Path ksFile = com.hongguo.api.core.KeyStore.store().storeFile();
+            String raw = Files.exists(ksFile)
+                    ? new String(Files.readAllBytes(ksFile),
+                            java.nio.charset.StandardCharsets.UTF_8) : "";
+            check("apikeys.json 文件内容含 device_id", raw.contains(id.deviceId), "");
+        } catch (Exception e) {
+            check("apikeys.json 文件内容含 device_id", false, String.valueOf(e.getMessage()));
+        }
 
         // iid 恒为 0：非 0 随机 iid 会触发上游风控
         Object iid = Client.baseQuery().get("iid");
@@ -449,7 +472,7 @@ final class SelfTest {
     /** 密钥管理。 */
     private void keyStore() {
         section("14. 本地链路密钥");
-        com.hongguo.api.core.KeyStore ks = new com.hongguo.api.core.KeyStore();
+        com.hongguo.api.core.KeyStore ks = com.hongguo.api.core.KeyStore.store();
         // 与 Server.ensureBootstrap() 同一入口：干净环境（从未启动过服务）下
         // apikeys.json 不存在。这里先自签一把，让下面两项断言确定执行，
         // 结论不随「是否跑过服务」浮动——早期版本在这里按运行态跳过，
@@ -464,7 +487,9 @@ final class SelfTest {
         // 管理口令：apikeys.json 里没有则生成并写回，重读必须拿到同一个值
         String at1 = ks.ensureAdminToken();
         check("管理口令已生成（64 位 hex）", at1.length() == 64, "len=" + at1.length());
-        com.hongguo.api.core.KeyStore ks2 = new com.hongguo.api.core.KeyStore();
+        // 管理口令持久化到 apikeys.json：单例内重读必须拿到同一个值，
+        // 再从文件新开一个实例复核（跨实例也能读到，证明确实落了盘）
+        com.hongguo.api.core.KeyStore ks2 = com.hongguo.api.core.KeyStore.store();
         check("管理口令持久化到 apikeys.json", at1.equals(ks2.ensureAdminToken()), "");
     }
 

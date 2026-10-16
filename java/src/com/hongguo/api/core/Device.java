@@ -4,12 +4,7 @@ import com.hongguo.api.util.Json;
 import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Log;
 
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.security.SecureRandom;
-import java.time.Instant;
 import java.util.Map;
 
 /**
@@ -32,31 +27,18 @@ import java.util.Map;
  *
  * 优先级：
  *   1. 环境变量 HONGGUO_DEVICE_ID / HG_DEVICE_ID（便于多实例隔离）
- *   2. 配置里已有的 device_id（content-config.json base_query）
- *   3. server/config/device.json 中持久化的值
- *   4. 以上都没有时生成新的并落盘
+ *   2. 配置里已有的 device_id（config.json 的 upstream.base_query）
+ *   3. apikeys.json 中持久化的值（与密钥同文件，均为本机长期状态）
+ *   4. 以上都没有时生成新的并写回 apikeys.json
+ *
+ * <p>历史：device_id 早期单独持久化在 {@code server/config/device.json}，
+ * 与 config.json 的 {@code runtime.device_id} 配置项构成双入口；1.0.7 起
+ * 并入 apikeys.json（该文件同样不入 git、不进发行包——身份进 git 会让
+ * 所有 clone 者共用同一设备指纹，有风控风险）。
  */
 public final class Device {
 
     private static final SecureRandom RND = new SecureRandom();
-
-    /**
-     * 持久化目录：server/config（与 config.json / content-config.json 同处）。
-     * 固定不随 runtime.data_dir 迁移——后者只影响视频缓存（stream-cache），
-     * 设备身份与密钥属于长期状态，归入 config 目录。
-     */
-    private static Path configDir() {
-        return Paths.get("server", "config");
-    }
-
-    private static Path deviceFile() {
-        return configDir().resolve("device.json");
-    }
-
-    /** device.json 的落盘路径（自检与诊断用）。 */
-    public static Path storeFile() {
-        return deviceFile();
-    }
 
     /** 设备 ID 取值范围：与抓包一致，16 位十进制（1e15 ~ 1e16-1）。 */
     public static String randomDeviceId() {
@@ -74,32 +56,6 @@ public final class Device {
             if (t.charAt(i) < '0' || t.charAt(i) > '9') return false;
         }
         return true;
-    }
-
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> readStore() {
-        try {
-            Path f = deviceFile();
-            if (!Files.exists(f)) return Json.obj();
-            String raw = new String(Files.readAllBytes(f), StandardCharsets.UTF_8);
-            if (!raw.isEmpty() && raw.charAt(0) == '﻿') raw = raw.substring(1);
-            Object v = Json.parse(raw);
-            return Json.optObj(v);
-        } catch (Exception e) {
-            return Json.obj();
-        }
-    }
-
-    private static boolean writeStore(Map<String, Object> obj) {
-        try {
-            Path f = deviceFile();
-            Files.createDirectories(f.getParent());
-            Files.write(f, Json.stringifyPretty(obj).getBytes(StandardCharsets.UTF_8));
-            return true;
-        } catch (Exception e) {
-            Log.warn("写入设备身份文件失败（仅本次运行有效）: " + e.getMessage());
-            return false;
-        }
     }
 
     /** 取得本机稳定 device_id 的结果。 */
@@ -135,23 +91,17 @@ public final class Device {
             if (isValidId(cfg)) return new Identity(cfg, "config");
         }
 
-        // 3) 复用上次持久化的值
-        Map<String, Object> store = readStore();
-        String saved = Json.optStr(store.get("device_id"), "").trim();
+        // 3) 复用 apikeys.json 里持久化的值
+        String saved = KeyStore.store().deviceId();
         if (isValidId(saved)) {
             if (baseQuery != null) baseQuery.put("device_id", saved);
             return new Identity(saved, "stored");
         }
 
-        // 4) 首次生成并落盘
+        // 4) 首次生成并写回 apikeys.json
         String id = randomDeviceId();
         if (baseQuery != null) baseQuery.put("device_id", id);
-        Map<String, Object> out = Json.obj();
-        out.put("device_id", id);
-        // 刻意不写 iid：随机 iid 会触发风控（见文件头实测结论）
-        out.put("created_at", Instant.now().toString());
-        out.put("note", "本机稳定设备标识；删除此文件会重新生成并可能触发上游风控");
-        writeStore(out);
+        KeyStore.store().setDeviceId(id);
         return new Identity(id, "generated");
     }
 }

@@ -146,7 +146,6 @@ trap 'rm -rf "$WORK"' EXIT
 tar -C "$SRC" -cf - \
   --exclude='./server/stream-cache' \
   --exclude='./server/config/apikeys.json' \
-  --exclude='./server/config/device.json' \
   --exclude='./java/build' \
   --exclude='./.git' \
   --exclude='./jre' \
@@ -164,8 +163,8 @@ tar -C "$SRC" -cf - \
 mkdir -p "$COMMON/server/stream-cache"
 cat > "$COMMON/server/stream-cache/.gitkeep" <<'EOF'
 解密成品缓存目录。首次启动会自动签发
-server/config/apikeys.json，设备标识落在 server/config/device.json
-（两者属长期状态，归入 config 目录）。
+server/config/apikeys.json，设备标识（device_id）与链路密钥
+同存于该文件（属长期状态，归入 config 目录）。
 EOF
 
 # ---------- JRE 下载与缓存 ----------

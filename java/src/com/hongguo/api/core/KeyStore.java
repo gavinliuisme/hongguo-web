@@ -25,6 +25,25 @@ public final class KeyStore {
 
     private static final SecureRandom RND = new SecureRandom();
 
+    /**
+     * 进程内单例：密钥与设备身份都持久化在这一个文件里，且每次保存都是
+     * 全量重写。若各处各自 new KeyStore，后保存的一方会拿自己的缓存覆盖
+     * 另一方刚写进去的字段（典型如 Device 写 device_id、Server 随后
+     * 保存 admin_token，把 device_id 又抹掉）。因此统一走单例。
+     */
+    private static KeyStore INSTANCE;
+
+    /** 取得（必要时懒加载）进程内唯一的 KeyStore。 */
+    public static synchronized KeyStore store() {
+        if (INSTANCE == null) INSTANCE = new KeyStore();
+        return INSTANCE;
+    }
+
+    /** 持久化文件路径（自检与诊断用）。 */
+    public Path storeFile() {
+        return file;
+    }
+
     private final Path file;
     /** key -> 记录。 */
     private final Map<String, Rec> keys = new LinkedHashMap<>();
@@ -32,6 +51,8 @@ public final class KeyStore {
     private String adminToken = "";
     /** 本次启动是否由 ensureAdminToken() 新生成了口令（供控制台决定是否提示）。 */
     private boolean adminTokenFresh = false;
+    /** 设备身份（device_id）；空表示文件里还没有，见 {@link #setDeviceId}。 */
+    private String deviceId = "";
 
     /** 密钥记录。 */
     public static final class Rec {
@@ -66,6 +87,7 @@ public final class KeyStore {
             Map<String, Object> root = Json.optObj(v);
             if (root == null) return;
             this.adminToken = Json.optStr(root.get("admin_token"), "").trim();
+            this.deviceId = Json.optStr(root.get("device_id"), "").trim();
             for (Object rowObj : Json.optArr(root.get("keys"))) {
                 Map<String, Object> row = Json.optObj(rowObj);
                 if (row == null) continue;
@@ -93,6 +115,8 @@ public final class KeyStore {
             // 只在已生成/已读取到管理口令时落盘：没解析过口令就写字段，
             // 会在用户尚未用到管理接口时往文件里塞一个从未示人的值。
             if (!adminToken.isEmpty()) out.put("admin_token", adminToken);
+            // device_id 同理：只有显式设置过才写，避免无谓字段
+            if (!deviceId.isEmpty()) out.put("device_id", deviceId);
             Files.write(file, Json.stringifyPretty(out).getBytes(StandardCharsets.UTF_8));
         } catch (Exception e) {
             Log.warn("写入密钥文件失败（仅内存生效）: " + e.getMessage());
@@ -130,6 +154,28 @@ public final class KeyStore {
     /** 本次启动的管理口令是否为新生成（文件里原本没有）。 */
     public boolean adminTokenFresh() {
         return adminTokenFresh;
+    }
+
+    /**
+     * 文件里持久化的设备身份；没有则空串。
+     *
+     * <p>device_id 与密钥同住本文件：两者都是「本机长期状态」，且都必须
+     * 留在 git/发行包之外（身份进 git 会让所有 clone 者共用同一设备指纹）。
+     * 早期 device_id 单独放在 {@code device.json}，与 config.json 的
+     * {@code runtime.device_id} 配置项形成双入口，1.0.7 起并入此处。
+     */
+    public String deviceId() {
+        return deviceId;
+    }
+
+    /**
+     * 写入设备身份并立即落盘（供 {@code Device} 首次生成时调用）。
+     * 空值忽略——擦除身份没有正当用途，只会让下次启动重新生成。
+     */
+    public void setDeviceId(String id) {
+        if (id == null || id.isEmpty()) return;
+        deviceId = id.trim();
+        save();
     }
 
     public String generate(String note) {

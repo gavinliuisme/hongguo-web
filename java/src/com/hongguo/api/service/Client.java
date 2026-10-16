@@ -3,6 +3,7 @@ package com.hongguo.api.service;
 import com.hongguo.api.core.Device;
 import com.hongguo.api.core.PureSign;
 import com.hongguo.api.core.Safeguards;
+import com.hongguo.api.util.Config;
 import com.hongguo.api.util.Crypto;
 import com.hongguo.api.util.Http;
 import com.hongguo.api.util.Json;
@@ -41,52 +42,58 @@ public final class Client {
     private Client() {}
 
     // ==================== 配置装载 ====================
+    //
+    // 上游参数（api_host / base_query / session_headers）住在 config.json 的
+    // upstream 段（原 content-config.json，1.0.7 起合并，固定值不常改）。
+    // 环境变量 HONGGUO_HOST / HONGGUO_UA 仍可临时覆盖。
 
-    @SuppressWarnings("unchecked")
-    private static Map<String, Object> loadConfig() {
-        List<String> candidates = new ArrayList<>();
-        String env = Log.env("HONGGUO_CONTENT_CONFIG", null);
-        if (env != null) candidates.add(env);
-        candidates.add(Paths.get("server", "config", "content-config.json").toString());
+    public static final String HOST = Log.env("HONGGUO_HOST",
+            Config.str("upstream.api_host", ""));
 
-        for (String c : candidates) {
-            try {
-                Path p = Paths.get(c);
-                if (!Files.exists(p)) continue;
-                String raw = new String(Files.readAllBytes(p), StandardCharsets.UTF_8);
-                if (!raw.isEmpty() && raw.charAt(0) == '﻿') raw = raw.substring(1);
-                return Json.parseObject(raw);
-            } catch (Exception e) {
-                // 尝试下一个
-            }
+    static {
+        if (HOST.isEmpty()) {
+            throw new RuntimeException(
+                    "config.json 缺少 upstream.api_host（上游接口参数段，见 upstream._说明）");
         }
-        throw new RuntimeException("未找到内容配置（content-config.json）");
     }
 
-    private static final Map<String, Object> CFG = loadConfig();
-
-    public static final String HOST = Log.env("HONGGUO_HOST", Json.optStr(CFG.get("api_host"), ""));
+    /**
+     * 基础 query 参数。{@code _} 开头的键是给用户看的注释（config.json 的
+     * 文档风格），整体透传进上游 query 前必须剥掉。
+     */
+    /** base_query 的缓存实例：device_id 就注入在它身上，必须保持同一实例。 */
+    private static Map<String, Object> BASE_QUERY_CACHE;
 
     @SuppressWarnings("unchecked")
     public static Map<String, Object> baseQuery() {
-        Map<String, Object> q = Json.optObj(CFG.get("base_query"));
-        return q != null ? q : Json.obj();
+        if (BASE_QUERY_CACHE == null) {
+            Map<String, Object> q = Json.optObj(Config.get("upstream.base_query"));
+            Map<String, Object> out = new LinkedHashMap<>();
+            if (q != null) {
+                for (Map.Entry<String, Object> e : q.entrySet()) {
+                    if (!e.getKey().startsWith("_")) out.put(e.getKey(), e.getValue());
+                }
+            }
+            BASE_QUERY_CACHE = out;
+        }
+        return BASE_QUERY_CACHE;
     }
 
     @SuppressWarnings("unchecked")
     public static Map<String, String> sessionHeaders() {
-        Map<String, Object> h = Json.optObj(CFG.get("session_headers"));
+        Map<String, Object> h = Json.optObj(Config.get("upstream.session_headers"));
         Map<String, String> out = new LinkedHashMap<>();
         if (h != null) {
             for (Map.Entry<String, Object> e : h.entrySet()) {
+                // 同 baseQuery：注释键不进请求头
+                if (e.getKey().startsWith("_")) continue;
                 if (e.getValue() != null) out.put(e.getKey(), String.valueOf(e.getValue()));
             }
         }
         return out;
     }
 
-    // search/tab/v 等接口校验 query 里的 device_id，缺失一律返回 code=100103
-    // PARAM_INVALID。这里补齐一个本机稳定且持久化的值。
+
     private static final Map<String, Object> BASE_QUERY = baseQuery();
     private static final Device.Identity IDENTITY = Device.ensureDeviceId(BASE_QUERY);
 
@@ -333,7 +340,7 @@ public final class Client {
      *
      * 本地纯代码签名模式下本方法为空操作：设备身份由
      * {@link Device#ensureDeviceId} 本机生成并持久化，token 来自
-     * content-config.json 的 session_headers，不存在需要从外部
+     * config.json 的 upstream.session_headers，不存在需要从外部
      * 签名服务抓取的状态。保留方法签名是为了让 api() 的重试流程
      * 无需为此分支。
      */
