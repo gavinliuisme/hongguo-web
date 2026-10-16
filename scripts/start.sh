@@ -3,62 +3,53 @@
 #  启动 API 服务（Linux / macOS）
 #
 #  设计原则与 start.bat 一致：脚本层保持极薄。
-#  不解析 config.json、不判断 Java 版本、不决定任何事——
-#  配置一律由 Java 侧读取 server/config/config.json。
+#  不解析 config.json、不判断 Node 版本、不决定任何事——
+#  配置一律由 Node 侧读取 server/config/config.json。
 #
-#  这里只保留三件 Java 做不到的事：
-#    1. 找JRE（没有 JVM 就跑不起 Java 代码）
-#    2. 缺 JRE 时提示如何安装
-#    3. 拉起 jar
+#  这里只保留三件 Node 做不到的事：
+#    1. 找 Node 运行时（没有 node 就跑不起后端代码）
+#    2. 缺 Node 时提示如何安装
+#    3. 拉起 server/src/main.js
 # ============================================================
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-JAR="java/dist/hongguo-api.jar"
+ENTRY="server/src/main.js"
 
-# ---------- 找 JRE ----------
-# 顺序：自带 jre/ > JAVA_HOME > PATH。
-# 自带副本优先，是为了避免系统上的旧 JDK(8/11) 抢先被选中。
-find_java() {
-  local exe="java" d
-  [ -x "jre/bin/$exe" ] && { echo "jre/bin/$exe"; return; }
-  for d in jre/*/; do
-    [ -x "${d}bin/$exe" ] && { echo "${d}bin/$exe"; return; }
-  done
-  [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/$exe" ] && { echo "$JAVA_HOME/bin/$exe"; return; }
+# ---------- 找 Node ----------
+# 顺序：自带 node/ > NODE_HOME > PATH。
+# 自带副本优先，是为了避免系统上的旧 Node(14/16) 抢先被选中。
+find_node() {
+  local exe="node"
+  [ -x "node/bin/$exe" ] && { echo "$PWD/node/bin/$exe"; return; }
+  [ -n "${NODE_HOME:-}" ] && [ -x "$NODE_HOME/bin/$exe" ] && { echo "$NODE_HOME/bin/$exe"; return; }
   command -v "$exe" 2>/dev/null && return
   echo ""
 }
 
-JAVA_BIN="$(find_java)"
+NODE_BIN="$(find_node)"
 
-if [ -z "$JAVA_BIN" ]; then
+if [ -z "$NODE_BIN" ]; then
   echo
-  echo "  未找到 Java 运行时。"
+  echo "  未找到 Node 运行时。"
   echo
-  echo "  发行包自带对应平台的 JRE，正常不会走到这里；"
+  echo "  发行包自带对应平台的 Node，正常不会走到这里；"
   echo "  若你是从源码运行，请任选一种方式："
-  echo "    1) 安装 Temurin 20+：https://adoptium.net/   （推荐）"
-  echo "    2) 把任意 JRE 20+ 解压到项目的 jre/ 目录（需要里面有 bin/java）"
+  echo "    1) 安装 Node.js 18+：https://nodejs.org/   （推荐）"
+  echo "    2) 把任意 Node 18+ 解压到项目的 node/ 目录（需要里面有 bin/node）"
   echo
   exit 1
 fi
 
-# ---------- jar 是否存在 ----------
-# 刻意不在这里自动构建：编译需要 JDK，而本机可能只有 JRE。
-# 缺失时由下面的提示说明该做什么。
-if [ ! -f "$JAR" ]; then
+# ---------- 入口是否存在 ----------
+if [ ! -f "$ENTRY" ]; then
   echo
-  echo "  缺少 $PWD/$JAR"
+  echo "  缺少 $PWD/$ENTRY"
   echo
-  echo "  发行包自带预编译 jar，所以这里缺失通常是解压不完整。"
-  echo "  如果你是从源码构建，请安装 JDK 20+ 后执行："
-  echo "      bash scripts/build-java.sh"
+  echo "  发行包自带完整代码，所以这里缺失通常是解压不完整。"
   echo
   exit 1
 fi
 
 # ---------- 拉起 ----------
-# 不加任何编码参数：JVM 默认已跟随控制台代码页，强行指定 UTF-8 反而会让
-# 控制台按本地编码解码 UTF-8 字节而出现乱码。需要其他编码时设 HG_LOG_ENCODING。
-exec "$JAVA_BIN" -jar "$JAR" "$@"
+exec "$NODE_BIN" "$ENTRY" "$@"

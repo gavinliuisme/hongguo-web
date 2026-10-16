@@ -10,7 +10,7 @@
 
 ![播放器界面截图](screenshot/player.png)
 
-红果短剧网页版 —— 后端 Java（零第三方依赖，JDK 20）+ 前端静态网页。
+红果短剧网页版 —— 后端 Node.js（零第三方依赖，Node 18+）+ 前端静态网页。
 
 ---
 
@@ -18,39 +18,38 @@
 
 启动前先去 **[Releases 页](https://github.com/sunnysky123/hongguo-web/releases)**
 下载与自己系统匹配的那个压缩包，解压就能跑。
-**不需要克隆仓库，也不需要预装 Java** —— 每个包都自带对应平台的 Java 运行时。
+**不需要克隆仓库，也不需要预装 Node** —— 每个包都自带对应平台的 Node 运行时。
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.0.1` 为例） |
+| 你的系统 | 下载的文件（`1.0.7` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.0.1-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.0.1-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.0.1-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.0.1-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.0.1-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.0.7-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.0.7-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.0.7-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.0.7-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.0.7-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `server/config/config.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
 >
-> `Windows-arm` 包内置的是同版本的 **x64** JRE：Temurin 没有发布 Windows on ARM
-> 的 JRE 25 构建，而 Windows on ARM64 原生兼容 x64 程序，直接用即可。
-> 其他四个包都是目标平台的原生运行时。
+> 五个包内置的都是**目标平台原生的** Node 运行时（nodejs.org 对
+> Windows on ARM64、Linux arm64、macOS arm64 都有官方构建）。
 
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.0.1-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.0.7-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
 ls
 ```
 
-应看到 `web/`、`java/`、`server/`、`scripts/`、
-`jre/` 以及「平台说明.txt」。`jre/` 就是内置的 Temurin JRE 25，**无需再装 Java**。
+应看到 `web/`、`server/`、`scripts/`、
+`node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.0.1-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.0.7-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -64,7 +63,7 @@ git clone https://github.com/sunnysky123/hongguo-web.git
 cd hongguo-web
 ```
 
-仓库本身不含 Java 运行时，从源码运行需要本机已有 Java 20+ 或自备 JRE；
+仓库本身不含 Node 运行时，从源码运行需要本机已有 Node 18+ 或自备运行时；
 运行时从哪来、怎么配，见「三、环境要求」。
 
 ---
@@ -78,21 +77,22 @@ cd hongguo-web
 | Windows | 双击 `scripts\start.bat` | 双击 `scripts\stop.bat` |
 | Linux / macOS | `bash scripts/start.sh` | `bash scripts/stop.sh` |
 
-`start` 脚本会检查 Java 运行时与 JAR 是否就绪，直接拉起服务，
+`start` 脚本会检查 Node 运行时是否就绪，直接拉起服务，
 并**自动打开浏览器**访问 **<http://127.0.0.1:8000/>**。
-`stop` 脚本按进程类型 + jar 路径双重匹配，不会误杀其他 Java 进程。
+`stop` 脚本按进程类型 + 入口脚本路径双重匹配，不会误杀其他 Node 进程。
 
 端口、监听地址等配置都集中在「六、配置项」一节，改完保存即生效。
 
-不想用脚本时也可以直接跑 jar（各平台通用）：
+不想用脚本时也可以直接跑入口脚本（各平台通用）：
 
-    java -jar java/dist/hongguo-api.jar                # 启动
-    java -jar java/dist/hongguo-api.jar --config       # 查看生效配置
-    java -jar java/dist/hongguo-api.jar --selftest     # 跑自检
-    java -jar java/dist/hongguo-api.jar --stop         # 停掉在跑的实例
-    java -jar java/dist/hongguo-api.jar --version      # 显示版本
+    node server/src/main.js                # 启动
+    node server/src/main.js --config       # 查看生效配置
+    node server/src/main.js --selftest     # 跑自检
+    node server/src/main.js --stop         # 停掉在跑的实例
+    node server/src/main.js --version      # 显示版本
 
-JAR 已预编译进发行包，缺失通常是解压不完整；从源码运行时的构建方法见下一节。
+后端是纯 JS 源码，**没有构建步骤**：改完 `server/src/` 下的任意文件，
+重跑上面的命令即生效，无需编译、无需打包工具、无需联网。
 
 ### 自动打开浏览器
 
@@ -103,71 +103,44 @@ JAR 已预编译进发行包，缺失通常是解压不完整；从源码运行�
 前端页面还要等密钥就绪才能真正可用，过早打开会看到空白页。
 临时不想自动打开，见「六、配置项」的 `HG_OPEN_BROWSER`。
 
-### API 服务 JAR 的构建
-
-`java/dist/hongguo-api.jar` 是**构建产物，不入库**（已加入 .gitignore）。
-因此从源码 checkout 运行时，首次需要先构建一次：
-
-```bash
-bash scripts/build-java.sh      # Linux / macOS
-scripts\build-java.bat          # Windows
-```
-
-`start` 脚本**不会**自动构建——检测到 JAR 缺失就提示如何处理并退出，
-因为编译需要 JDK，而多数使用者的机器上只有 JRE。
-发行包不受影响：它由 `scripts/pack.sh` 打包时现场构建并打入包内，解压即用。
-
-注意：**修改 java/src 源码后需手动重跑上面的命令更新 JAR**
-（脚本不做源码时间戳检测）。
-
-> 只需要 JDK 的 `javac` 与 `jar`，不需要 Maven / Gradle，不联网。
-
 ---
 
 ## 三、环境要求
 
 | 组件 | 版本 | 是否必需 |
 |---|---|---|
-| Java 运行时 | **>= 20**；发行包已内置 `jre`（**Temurin 25 LTS**，按目标平台） | 必需 |
-| JDK（含 javac） | 20+ | 仅重新构建时需要（发行包已内置 JAR） |
-| ffmpeg / ffprobe | 任意近期版本 | 可选。剥离 CENC 信令默认走纯 Java 减壳，仅布局不符时回落；转码 HEVC 时才必需 |
+| Node 运行时 | **>= 18**；发行包已内置 `node`（**Node.js LTS**，按目标平台） | 必需 |
+| ffmpeg / ffprobe | 任意近期版本 | 可选。剥离 CENC 信令默认走纯 JS 减壳，仅布局不符时回落；转码 HEVC 时才必需 |
 
-### Java 运行时从哪来
+### Node 运行时从哪来
 
 **发行包**：每个平台的包都由 `scripts/pack.sh` 打包时放入对应平台的
-Temurin JRE 25 LTS，解压即用，目标机无需预装 Java；
+Node.js LTS 运行时，解压即用，目标机无需预装 Node；
 启动脚本也不会联网下载任何运行时。
 
-**源码 checkout**：仓库里没有 JRE，`start.bat` / `start.sh` 按以下顺序查找：
+**源码 checkout**：仓库里没有 Node，`start.bat` / `start.sh` 按以下顺序查找：
 
-    jre\（自行解压的） > JAVA_HOME > PATH
+    node\（自行解压的） > NODE_HOME > PATH
 
 三者都没找到时脚本会提示如何处理并退出，不会自动下载。两种处理方式：
 
-1. 装 Temurin 20+：<https://adoptium.net/>
-2. 或把任意 JRE 20+ 解压到项目的 `jre\` 目录（需含 `bin\java.exe`）
+1. 安装 Node.js 18+：<https://nodejs.org/>
+2. 或把任意 Node 18+ 解压到项目的 `node\` 目录（Unix 需含 `bin/node`，Windows 需含 `node.exe`）
 
 ```bash
-java -version   # 需 20+
-javac -version  # 仅重新构建 API 服务时需要
-ffmpeg -version # 可选
+node -v          # 需 18+
+ffmpeg -version  # 可选
 ```
 
-> **若你的 Java 低于 20**：`java/dist/hongguo-api.jar` 是用 JDK 20 编译的
-> （class 文件版本 64），低版本运行会报 `UnsupportedClassVersionError`。
-> 两种解决办法：
-> 1. **直接用**发行包自带的 `jre/`（Temurin 25 LTS，按目标平台），无需任何操作；
->    仓库本身不含 JRE，从源码运行时才需要本机已有 Java 或自行解压到 `jre/`；
-> 2. **自行重新编译**——用你本地的 JDK（20 及以上）重新构建即可，产物适配你的版本：
->    ```bash
->    bash scripts/build-java.sh      # Linux / macOS
->    scripts\build-java.bat          # Windows
->    ```
->    构建只依赖 `javac` 与 `jar`，不联网、不需要 Maven。
+> **若你的 Node 低于 18**：`package.json` 的 `engines` 声明下限为 18。
+> 低版本可能缺少本项目用到的 API，建议升级，或直接用发行包自带的 `node/`。
+> 发行包内的运行时与打包机同版本，不受本机 Node 影响。
 
 ---
 
 ## 四、前端使用
+
+前端代码无需任何改动即可使用；以下为交互与行为说明。
 
 ### 打开方式
 
@@ -270,7 +243,7 @@ ffmpeg -version # 可选
 > 注意扩展名是 `.play.mp4` 而非 `.mp4`（剥离 CENC 信令后会改名），
 > 手写脚本判断缓存是否存在时不要只找 `.mp4`。
 >
-> **信令剥离默认不依赖 ffmpeg**：解密后由纯 Java 代码删信令盒、修补盒尺寸、
+> **信令剥离默认不依赖 ffmpeg**：解密后由纯 JS 代码删信令盒、修补盒尺寸、
 > 平移 chunk 偏移、原样流拷 mdat，产物即 `.play.mp4`。仅当文件布局不在
 > 减壳支持范围（如 moov 在尾部）时才回落 ffmpeg remux；ffmpeg 也未安装时
 > 产物为 `<vid>_<清晰度>.raw.mp4`——内容已是解密后的明文（仅未剥离信令），
@@ -397,7 +370,7 @@ curl -H "x-api-key: <key>" \
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
 | `HG_TRANSCODE` | 空（不转码） | 设为 `1` 时把 HEVC 转成 H.264，仅在机器缺 HEVC 解码器时才需要 | `runtime.transcode` |
-| `HONGGUO_PURE_STRIP` | 空（启用） | CENC 信令剥离方式：空 = 纯 Java 减壳（默认，不依赖 ffmpeg）；`0` = 强制走 ffmpeg remux | 无，仅环境变量 |
+| `HONGGUO_PURE_STRIP` | 空（启用） | CENC 信令剥离方式：空 = 纯 JS 减壳（默认，不依赖 ffmpeg）；`0` = 强制走 ffmpeg remux | 无，仅环境变量 |
 | `HG_H264_ENCODER` | 空（自动探测） | 强制指定 H.264 编码器，如 `libx264` / `libopenh264` | 无，仅环境变量 |
 | `HG_SIGN_LIST` | 见代码 | 免签接口列表（一般不需改） | 无，仅环境变量 |
 | `HG_OPEN_BROWSER` | 空（跟随配置） | 设为 `0` 时服务就绪后不自动打开浏览器 | `launcher.open_browser` |
@@ -434,10 +407,10 @@ start.bat > run.log 2>&1
 ## 七、自检
 
 ```bash
-java -jar java/dist/hongguo-api.jar --selftest
+node server/src/main.js --selftest
 ```
 
-覆盖 21 组共 **162 项**断言：
+覆盖 21 组共 **165 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -461,14 +434,17 @@ java -jar java/dist/hongguo-api.jar --selftest
 | 18 | stream-cache 数量上限（超出按修改时间淘汰最旧；上限取 `runtime.cache.max_files`，可被 `HONGGUO_CACHE_MAX_FILES` 覆盖） |
 | 19 | 搜索分页切片（skip 生效且 has_more 判据正确） |
 | 20 | App 取址链路：合成设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
-| 21 | CENC 信令纯 Java 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
+| 21 | CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
 
 这些都是踩坑后固化的回归基线，用于判断「迁移是否等价」。
 预期结尾输出：
 
 ```
-  结果：162/162 全部通过
+  结果：165/165 全部通过
 ```
+
+> 早期文档曾写作 162 项，是把第 21 组的部分判据漏计所致；实际执行始终是
+> 165 项，本仓库的 Node 自检与迁移前的 Java 自检逐条一致。
 
 自检不访问网络、不依赖任何外部服务，可在离线环境运行。
 
@@ -479,45 +455,42 @@ java -jar java/dist/hongguo-api.jar --selftest
 ```
 hongguo-web/
 ├── README.md                  ← 本文件：快速上手 + 完整说明
+├── package.json               Node 项目描述（npm start / npm run selftest）
 ├── scripts/
 │   ├── start.bat / start.sh   一键启动
 │   ├── stop.bat / stop.sh     停止服务
-│   ├── build-java.bat / .sh   构建 API 服务 JAR（纯 javac，无需联网；不随发行包分发）
-│   └── pack.sh                打包 5 个平台发行版（内置 JRE）
-├── java/
-│   ├── src/com/hongguo/api/   Java 后端源码（22 个文件，零第三方依赖）
-│   │   ├── Main.java          入口（--config / --stop / --selftest / --version）
-│   │   ├── Launcher.java      启动编排（API 服务 + 浏览器）
-│   │   ├── Server.java        HTTP 路由 + 鉴权 + 限流
-│   │   ├── SelfTest.java      自检套件
-│   │   ├── Mp4Fixture.java    自检用最小加密 mp4 夹具
-│   │   ├── core/
-│   │   │   ├── PureSign.java     本地纯代码签名（六个请求头）
-│   │   │   ├── Spade.java        spade -> content key
-│   │   │   ├── Sm3.java          SM3 摘要（x-medusa 签名用）
-│   │   │   ├── Mp4.java          BMFF 盒树 + CENC 解密 + 纯 Java 减壳（剥离信令）
-│   │   │   ├── Device.java       本机稳定 device_id
-│   │   │   ├── KeyStore.java     密钥管理
-│   │   │   └── Safeguards.java   风控 + 缓存 + 节流
-│   │   ├── service/
-│   │   │   ├── WebSource.java    官网数据源（搜索/分集列表）
-│   │   │   ├── AppSource.java    App 取址链路（b 域名 v1 + fallback_api）
-│   │   │   ├── Client.java       上游 API 客户端（签名 + 六请求头）
-│   │   │   ├── Stream.java       下载 + 解密 + remux
-│   │   │   └── Res.java          响应辅助（JSON/静态/Range）
-│   │   └── util/
-│   │       ├── Config.java       配置加载（JSON + 环境变量覆盖）
-│   │       ├── Json.java         自研轻量 JSON
-│   │       ├── Crypto.java       MD5 / AES-128-CTR / hex
-│   │       ├── Http.java         HttpURLConnection 封装
-│   │       └── Log.java          日志与配置读取
-│   ├── dist/hongguo-api.jar   API 服务 JAR（构建产物，不入库）
-│   └── build/                 编译中间产物
-├── jre/                       Java 运行时（仅发行包内有；仓库不含）
+│   └── pack.sh                打包 5 个平台发行版（内置 Node 运行时）
 ├── server/
-│   ├── config/config.json      启动配置（端口、监听、调优参数、上游接口参数 upstream 段）
-│   ├── config/apikeys.json     链路密钥、管理口令与 device_id（首次启动自动生成，不入库）
-│   └── stream-cache/           解密成品缓存（运行时生成，不入库）
+│   ├── src/                   Node 后端源码（零第三方依赖）
+│   │   ├── main.js            入口（--config / --stop / --selftest / --version）
+│   │   ├── launcher.js        启动编排（API 服务 + 浏览器）
+│   │   ├── server.js          HTTP 路由 + 鉴权 + 限流
+│   │   ├── selftest.js        自检套件
+│   │   ├── mp4-fixture.js     自检用最小加密 mp4 夹具
+│   │   ├── core/
+│   │   │   ├── pure-sign.js   本地纯代码签名（六个请求头）
+│   │   │   ├── spade.js       spade -> content key
+│   │   │   ├── sm3.js         SM3 摘要（x-medusa 签名用）
+│   │   │   ├── mp4.js         BMFF 盒树 + CENC 解密 + 纯 JS 减壳（剥离信令）
+│   │   │   ├── device.js      本机稳定 device_id
+│   │   │   ├── keystore.js    密钥管理
+│   │   │   └── safeguards.js  风控 + 缓存 + 节流
+│   │   ├── service/
+│   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
+│   │   │   ├── app-source.js  App 取址链路（b 域名 v1 + fallback_api）
+│   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
+│   │   │   ├── stream.js      下载 + 解密 + remux
+│   │   │   └── res.js         响应辅助（JSON/静态/Range）
+│   │   └── util/
+│   │       ├── config.js      配置加载（JSON + 环境变量覆盖）
+│   │       ├── json.js        轻量 JSON
+│   │       ├── crypto.js      MD5 / AES-128-CTR / hex
+│   │       ├── http.js        HTTP 客户端封装（node:http/https）
+│   │       └── log.js         日志与配置读取
+│   ├── config/config.json     启动配置（端口、监听、调优参数、上游接口参数 upstream 段）
+│   ├── config/apikeys.json    链路密钥、管理口令与 device_id（首次启动自动生成，不入库）
+│   └── stream-cache/          解密成品缓存（运行时生成，不入库）
+├── node/                      Node 运行时（仅发行包内有；仓库不含）
 └── web/                       前端静态资源（可直接浏览器打开）
     ├── index.html
     ├── styles.css
@@ -578,13 +551,13 @@ HEVC 解码支持，就会这样——`readyState` 正常到 4、`videoWidth` �
    set HG_TRANSCODE=1 && scripts\start.bat
    ```
 
-> 转码默认**关闭**。实测 1080×1920 整集剥离信令约 1 秒（纯 Java 减壳），
+> 转码默认**关闭**。实测 1080×1920 整集剥离信令约 1 秒（纯 JS 减壳），
 > 转 H.264 约 16 秒，所以支持 HEVC 的机器没必要转。
 > 若确实开了转码但没找到编码器，日志会提示并退回只剥离信令。
 
 **Q：没装 ffmpeg 能播放吗？**
 
-A：能。剥离 CENC 信令默认走**纯 Java 减壳**（删信令盒、修补盒尺寸、
+A：能。剥离 CENC 信令默认走**纯 JS 减壳**（删信令盒、修补盒尺寸、
 平移 chunk 偏移、原样流拷 mdat），全程不调用外部进程，产物即
 `.play.mp4`。只有文件布局不在减壳支持范围时（如 moov 在文件尾部）
 才回落 ffmpeg remux；此时若 ffmpeg 也未安装，产物为 `.raw.mp4`——
@@ -610,7 +583,7 @@ A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返�
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
-**Q：启动时报 `BindException: Address already in use`？**
+**Q：启动时报端口被占用（`EADDRINUSE`）？**
 
 A：API 服务端口被占用。改端口重试：
 
@@ -623,19 +596,19 @@ set PORT=8001 && scripts\start.bat
 **Q：Windows 双击 `start.bat` 后服务起不来？**
 
 A：先看窗口里的首行错误。常见两种：
-- 端口被占用 → 见上一条 `BindException` 的处理
-- `UnsupportedClassVersionError` → Java 版本过低，改用发行包自带的 `jre/`；
-  或按「三、环境要求」末尾的办法用本地 JDK 重新构建 JAR
+- 端口被占用 → 见上一条 `EADDRINUSE` 的处理
+- 「No Node runtime found」→ 本机没装 Node，且不在发行包里运行：
+  安装 Node 18+（<https://nodejs.org/>），或把 Node 解压到项目 `node\`（需含 `node.exe`）
 
-**Q：控制台中文显示成「Java锛歫re\bin\java.exe」这类乱码？**
+**Q：控制台中文显示成乱码？**
 
-A：这是编码不匹配 —— JVM 按 UTF-8 输出字节，而控制台按 GBK(936) 解码。
-程序默认**跟随控制台**，正常情况下不该出现。若你手动给 `java` 加过
-`-Dstdout.encoding=UTF-8`，请去掉：它会强制 JVM 输出 UTF-8 字节，
-与 GBK 控制台正好错开。脚本里已经不再传这个参数。
+A：Node 始终以 UTF-8 输出，现代终端（Windows Terminal、PowerShell、
+Linux/macOS 终端）默认按 UTF-8 解码，正常情况下不该出现。若旧版
+`cmd.exe` 仍按 GBK(936) 解码，换个终端或执行 `chcp 65001` 即可；
+启动脚本本身不含任何 `chcp`，也不给 Node 传任何编码参数。
 
 若确实需要指定编码（例如把输出重定向进文件再交给别的工具分析），
-用环境变量而不是 JVM 参数：`HG_LOG_ENCODING=UTF-8`（不设则跟随控制台）。
+用环境变量：`HG_LOG_ENCODING=UTF-8`（不设则跟随控制台）。
 
 **Q：启动后浏览器没有自动打开？**
 
@@ -650,32 +623,33 @@ A：日志里会明确写出结果，两种情况：
 
 **Q：包太大？**
 
-A：完整包约 56MB，其中大部分是内置的 Temurin JRE 25（压缩后约 45MB）——
-换来的是目标机无需预装 Java。
-若目标机已有 Java 20+（Temurin 25 LTS），删掉包内 `jre/` 目录即可正常启动，
-启动脚本会自动回落到系统 Java（查找顺序见「三、环境要求」）。
+A：完整包大部分体积是内置的 Node.js LTS 运行时——
+换来的是目标机无需预装 Node。
+若目标机已有 Node 18+，删掉包内 `node/` 目录即可正常启动，
+启动脚本会自动回落到系统 Node（查找顺序见「三、环境要求」）。
 
 **Q：打包要联网吗？**
 
-A：要。`pack.sh` 从 Adoptium 按平台下载对应 JRE，首次约 250MB。
-下载的 JRE 缓存在 `.pack-cache/`，同一平台重复打包不再联网。
+A：要。`pack.sh` 从 nodejs.org 按平台下载对应 Node 运行时，首次约 250MB。
+下载的运行时会用官方的 `SHASUMS256.txt` 做 SHA-256 校验，缓存在 `.pack-cache/`，
+同一平台重复打包不再联网。可用 `HG_NODE_VERSION` 固定版本号（缺省取最新 LTS）。
 只想打一个平台时用 `bash scripts/pack.sh Linux-arm`，
 `bash scripts/pack.sh --list` 可列出全部平台名。
 
-**Q：发行包里没有 build-java 脚本，怎么重新构建？**
+**Q：发行包和源码树有什么区别？为什么发行包里没有 pack.sh？**
 
-A：`build-java.sh` / `build-java.bat` 只在**源码树**里。发行包内置的是
-打包时构建好的 jar，使用者不需要 JDK，`pack.sh` 也就不再把构建脚本
-拷进包里。改了源码或版本号，在源码树执行 `bash scripts/build-java.sh`
-（Windows 用 `scripts\build-java.bat`）重新构建，再打包即可。
+A：发行包内置 Node 运行时与完整源码，解压即用；`pack.sh` 只在**源码树**里，
+是打包工具本身，使用者不需要。改了源码不需要任何构建，重跑
+`node server/src/main.js` 即生效；要出新版本包时，在源码树执行
+`bash scripts/pack.sh` 重新打包即可。
 
 **Q：停止后端口还被占用？**
 
-A：`stop` 脚本按「进程类型 + jar 路径」双重匹配，不会误杀其他 Java 进程。
+A：`stop` 脚本按「进程类型 + 入口脚本路径」双重匹配，不会误杀其他 Node 进程。
 若仍占用，先用**管理员身份**重跑该脚本；若提示「端口仍在监听，但未能定位到
 进程」，说明服务是以更高权限或从项目另一份拷贝启动的，当前权限读不到它的
 命令行 —— 用 `netstat -ano | findstr <端口>` 查到 PID 后 `taskkill /PID <pid> /F`
-手动结束，或在任务管理器结束对应的 `java.exe`。
+手动结束，或在任务管理器结束对应的 `node.exe`。
 
 **Q：解密报「content key 与密文不匹配」？**
 
@@ -744,7 +718,7 @@ A：不用填。收到 401 时前端会自动换新密钥并重新加载，卡�
 本项目的逆向分析思路与部分实现，参考自以下开源项目：
 
 - **[hongguo-desktop-releases](https://github.com/waligoraamodio288-rgb/hongguo-desktop-releases)** —— 桌面端版本，提供了本项目最初的分析起点与对照实现，感谢原作者的分享。
-- **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/PureSign.java` 与 `service/WebSource.java` 移植自此。
+- **[jackotom/hongguo-drama](https://github.com/jackotom/hongguo-drama)** —— 纯代码签名（x-gorgon / x-khronos / x-ladon / x-argus / x-helios / x-medusa）与官网网页数据源的参考实现，本项目 `core/pure-sign.js` 与 `service/web-source.js` 移植自此。
 
 ---
 
