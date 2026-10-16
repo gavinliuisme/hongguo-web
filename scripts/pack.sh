@@ -364,19 +364,25 @@ for out in "${BUILT[@]}"; do
     && echo "    ✅ node/bin/node 或 node/node.exe" \
     || { echo "    ❌ 缺失 Node 主程序"; FAILED=1; }
 
-  # 脚本互斥：不该出现对面家族的脚本
+  # 启动脚本互斥：只看 scripts/ 目录，不扫描整个包。
+  # 内置 Node 运行时自带的 npm 也含跨平台脚本（如 Linux 包的 gyp.bat、
+  # Windows 包的 completion.sh），但那些不是我们的启动脚本，不该由本项判定。
   plat="$(basename "$out" .zip | sed "s/^${PKG_ROOT}-//")"
   if [ "$(platform_family "$plat")" = "bat" ]; then
-    if grep -qE '\.sh$' <<<"$LIST"; then
-      echo "    ❌混入了 .sh 脚本"; FAILED=1
+    if grep -qE '(^|/)scripts/.*\.sh$' <<<"$LIST"; then
+      echo "    ❌ scripts/ 下混入了 .sh 脚本："
+      grep -E '(^|/)scripts/.*\.sh$' <<<"$LIST" | sed 's/^/       /'
+      FAILED=1
     else
-      echo "    ✅ 仅含 .bat 脚本"
+      echo "    ✅ scripts/ 仅含 .bat 脚本"
     fi
   else
-    if grep -qE '\.bat$' <<<"$LIST"; then
-      echo "    ❌ 混入了 .bat 脚本"; FAILED=1
+    if grep -qE '(^|/)scripts/.*\.bat$' <<<"$LIST"; then
+      echo "    ❌ scripts/ 下混入了 .bat 脚本："
+      grep -E '(^|/)scripts/.*\.bat$' <<<"$LIST" | sed 's/^/       /'
+      FAILED=1
     else
-      echo "    ✅ 仅含 .sh 脚本"
+      echo "    ✅ scripts/ 仅含 .sh 脚本"
     fi
   fi
 
