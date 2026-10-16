@@ -8,20 +8,22 @@
 #
 #  设计要点：
 #   1. 版本号唯一来源是 config.json，workflow 不硬编码任何版本字符串，
-#      与 pack.sh / build-java.sh 共用同一数据源。
+#      与 pack.sh 共用同一数据源。
 #   2. 首次提交（父提交里还没有 version 字段）视为「有变化」，
 #      否则该项目永远不会产出第一个 Release。
-#   3. 打包需要联网下载 5 份 JRE（约 250MB），故只在版本真的变了时才跑。
+#   3. 打包需要联网下载 5 份 Node 运行时（约 250MB），故只在版本真的变了时
+#      才跑。
 #   4. fetch-depth: 0 —— 需要完整的 git 历史来取上一个提交的内容。
 #   5. 保留 workflow_dispatch：改了打包逻辑但版本号没变时（例如修好了
 #      包名或包内结构），靠 push 只会走到「跳过」分支，必须能手动重发。
 #      force=true 让手动触发绕过版本比较。
-#   6. checkout 与 setup-java 均锁在 node24 版本（v7 / v6）。v4 系列跑的是
-#      node20，GitHub 已弃用并在强制迁移，会同时报出两条警告：一条是
-#      「Node.js 20 is deprecated」，另一条是 setup-java v4 本身已停止
-#      维护。升级前查过：v6 的 distribution 仍接受 temurin，
-#      java-version 格式未变；checkout v6 起凭据存到 RUNNER_TEMP 下的
-#      独立文件，本工作流不做 authenticated git push，不受影响。
+#   6. 不需要 setup-node：pack.sh 自己从 nodejs.org/dist 下载各平台运行时，
+#      runner 只要跑得动 bash + curl + python3 + zip 即可（python3 解析
+#      nodejs.org 的 index.json / SHASUMS256.txt，runner 自带）。
+#   7. checkout 锁在 node24 版本（v7）。v4 系列跑的是 node20，GitHub 已弃用
+#      并在强制迁移，会报「Node.js 20 is deprecated」。v6 起凭据存到
+#      RUNNER_TEMP 下的独立文件，本工作流不做 authenticated git push，
+#      不受影响。
 # ================================================================
 
 name: Release on version change
@@ -127,28 +129,12 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 准备构建环境
-        if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
-        # v6 使用 node24 运行时；v4 已被 GitHub 标记 deprecated
-        # （「will no longer receive updates」），会停止修复。
-        # v6 的变化对这里均无影响：distribution 仍支持 temurin，
-        # java-version 输入格式不变。（v6 把 zulu 的元数据来源从
-        # Zulu Discovery API 迁到 Azul Metadata API，与 temurin 无关。）
-        uses: actions/setup-java@v6
-        with:
-          # 显式装 JDK 25：JAR 由 JDK 25 编译（class 版本 69），
-          # 低版本 javac 编出来的包目标机跑不了。
-          # 不用 apt 的 openjdk-25-jdk-headless —— Ubuntu 24.04 官方源
-          # 里没有这个包名，apt install 会直接失败。
-          distribution: temurin
-          java-version: '25'
-
       - name: 安装打包依赖
         if: steps.check.outputs.changed == 'true' && steps.exists.outputs.exists == 'false'
         run: |
           sudo apt-get update
-          # pack.sh 用 zip 打包、unzip 解压 Windows 的 JRE；
-          # python3 用于解析 Adoptium 返回的 JSON（runner 已自带）。
+          # pack.sh 用 zip 打包、unzip 解压 Windows 的 Node 运行时；
+          # python3 用于解析 nodejs.org 返回的 JSON（runner 已自带）。
           sudo apt-get install -y zip unzip
 
       - name: 打包 5 个平台
