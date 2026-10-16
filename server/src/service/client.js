@@ -104,10 +104,6 @@ function currentDevice() {
   return POOL === null ? null : POOL.current();
 }
 
-function rotateDevice() {
-  return POOL === null ? null : POOL.rotate();
-}
-
 function identity() { return IDENTITY; }
 
 // ==================== 榜单 / 体裁常量 ====================
@@ -1277,7 +1273,6 @@ module.exports = {
   USER_AGENT,
   baseQuery,
   sessionHeaders,
-  rotateDevice,
   identity,
   buildUrl,
   buildHeaders,

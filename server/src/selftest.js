@@ -1157,4 +1157,4 @@ async function run() {
   return failed === 0 ? 0 : 1;
 }
 
-module.exports = { run, SelfTest: { run } };
+module.exports = { run };

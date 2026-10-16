@@ -87,9 +87,6 @@ function load() {
 
 const CFG = load();
 
-/** 配置文件是否已成功装载。 */
-function loaded() { return CFG !== null; }
-
 /** 配置文件实际路径，未装载时返回 null。 */
 function loadedFrom() {
   if (CFG === null) return null;
@@ -194,4 +191,4 @@ function keys() {
   return Object.keys(ENV_OF).sort();
 }
 
-module.exports = { loaded, loadedFrom, get, str, num, bool, version, keys, ENV_OF, PATHS };
+module.exports = { loadedFrom, get, str, num, bool, version, keys, ENV_OF, PATHS };

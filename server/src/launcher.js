@@ -111,9 +111,6 @@ async function main(args = process.argv.slice(2)) {
   await awaitShutdown();
 }
 
-/** Java 公开入口名为 main；run 作为同义别名导出，便于调用方语义化使用。 */
-const run = main;
-
 /**
  * 服务就绪后打开浏览器。
  *
@@ -653,9 +650,7 @@ function sleepSync(ms) {
 
 module.exports = {
   main,
-  run,
   stop: stopRunning,
-  openBrowser: openBrowserWhenReady,
   browse,
   openBrowserWhenReady,
   browserHost,

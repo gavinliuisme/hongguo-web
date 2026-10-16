@@ -28,8 +28,13 @@
  */
 const crypto = require('crypto');
 const Crypto = require('../util/crypto');
-const Sm3 = require('./sm3');
 const Log = require('../util/log');
+
+// SM3 由 Node 内置 crypto 提供（依赖 OpenSSL >= 1.1.1，Node >= 18 均满足）；
+// 不可用时直接抛错，不做降级——x-medusa 签名链路离开 SM3 无法工作。
+if (!crypto.getHashes().includes('sm3')) {
+  throw new Error('当前 Node 运行时缺少 SM3 算法支持（需 OpenSSL >= 1.1.1），x-medusa 签名链路无法工作');
+}
 
 // ==================== 基础位运算（对齐 JS 的 u32 语义） ====================
 
@@ -141,7 +146,7 @@ function md5(data) {
 }
 
 function sm3(data) {
-  return Sm3.hash(data);
+  return crypto.createHash('sm3').update(data).digest();
 }
 
 function b64(data) {
@@ -908,47 +913,4 @@ function paramOf(query, key, fallback) {
   return fallback;
 }
 
-// ==================== 自检 ====================
-
-const SELF_TEST_BASE = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/'
-  + '?aid=8662&device_id=1234567890123456&version_code=71532'
-  + '&version_name=7.1.5.32&device_type=SM-N9860';
-
-/**
- * 自检：对固定输入跑一遍全链路，确保不抛异常且头字段齐全。
- * 真正的字节级校验靠线上请求（code=0 即签名被接受）。
- */
-function selfTest() {
-  try {
-    const url = SELF_TEST_BASE + '&_rticket=1700000000000';
-    const body = Buffer.from('{"biz_param":{},"mixed_video_id_map":{"1004":["7686715217652223038"]}}', 'utf8');
-    const h = sign(url, body);
-    const keys = ['x-gorgon', 'x-khronos', 'x-ladon', 'x-argus', 'x-helios', 'x-medusa'];
-    let ok = Object.keys(h).length === 6;
-    for (const k of keys) {
-      if (typeof h[k] !== 'string' || h[k].length === 0) ok = false;
-    }
-
-    // khronos 覆盖：结果中的 x-khronos 必须与传入值一致
-    if (sign(url, body, 1700000000)['x-khronos'] !== '1700000000') ok = false;
-    // 无 body 签名（GET）必须可用
-    if (sign(url, null, 1700000000)['x-khronos'] !== '1700000000') ok = false;
-    // 分支抖动：_rticket 0..31 的分支不能全为 1
-    let varied = false;
-    for (let i = 0; i < 32; i++) {
-      if (branchOf(SELF_TEST_BASE + '&_rticket=' + (1700000000000 + i), body, 1700000000) !== 1) {
-        varied = true;
-        break;
-      }
-    }
-    if (!varied) ok = false;
-
-    Log.info('pure-sign 自检：' + (ok ? '通过（6 个签名头齐全）' : '失败 ' + Object.keys(h)));
-    return ok;
-  } catch (e) {
-    Log.warn('pure-sign 自检异常：' + e);
-    return false;
-  }
-}
-
-module.exports = { sign, branchOf, selfTest };
+module.exports = { sign, branchOf };

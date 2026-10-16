@@ -49,17 +49,6 @@ function cacheDir() {
 const INFLIGHT = new Map();
 
 /** 取该集指定清晰度的轨道信息。 */
-class VideoTrack {
-  constructor(url = null, spadeA = null, encrypt = false, definition = '?', size = 0) {
-    this.url = url;
-    this.spadeA = spadeA;
-    this.encrypt = encrypt;
-    this.definition = definition;
-    this.size = size;
-  }
-}
-
-/** 取该集指定清晰度的轨道信息。 */
 async function videoTrack(vid, quality) {
   // 播放直链统一走 App 取址：b 域名 multi_video_model/v1 + fallback_api 二次请求。
   // 上游 a 域名 preload/v1 已对部分分集（后集高发）不再返回 video_model；
@@ -695,7 +684,6 @@ module.exports = {
   ffmpegAvailable,
   transcodeEnabled,
   h264EncoderName,
-  VideoTrack,
   DecryptOut,
   Paths3,
   CACHE_MAX_FILES,

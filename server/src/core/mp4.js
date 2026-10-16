@@ -267,20 +267,6 @@ function parseBoxes(bufOrByteView, offset, end) {
   return boxes;
 }
 
-/** 递归收集指定类型的全部盒。 */
-function collect(box, type) {
-  const acc = [];
-  collectInto(box, type, acc);
-  return acc;
-}
-
-function collectInto(box, type, acc) {
-  for (const c of box.children) {
-    if (c.type === type) acc.push(c);
-    collectInto(c, type, acc);
-  }
-}
-
 /** 递归查找第一个指定类型的盒。 */
 function findBox(box, type) {
   for (const c of box.children) {
@@ -1253,7 +1239,7 @@ function putU64(b, p, v) {
 module.exports = {
   ByteView, ByteArrayStore, RafStore, FileHeadReader,
   Box, Track, Analysis, MoovSpan, DecryptResult,
-  parseBoxes, collect, findBox,
+  parseBoxes, findBox,
   analyzeEncryptedTracks, findMoov,
   ivToCounter, ctrCounter, counterFor,
   decryptTrack, trackBaseIvCandidates, avccSelfOk, pickProbeIndices, verifyVideoIv,

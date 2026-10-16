@@ -46,16 +46,7 @@ function envInt(name, def = 0) {
   return Number.isNaN(n) ? def : n;
 }
 
-function envBool(name, def = false) {
-  const v = env(name, null);
-  if (v === null) return def;
-  const s = v.toLowerCase();
-  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
-}
-
 /** 兼容原 Java 接口：Node 下控制台统一 UTF-8，无需处理代码页。 */
 function initEncoding() { /* no-op：Node 输出统一 UTF-8 */ }
 
-function consoleCharset() { return 'utf8'; }
-
-module.exports = { env, envInt, envBool, info, warn, error, initEncoding, consoleCharset };
+module.exports = { env, envInt, info, warn, error, initEncoding };

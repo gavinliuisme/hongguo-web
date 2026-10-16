@@ -27,9 +27,6 @@ const MAX_BYTES = Config.num('runtime.cache.mem_max_mb', 128) * 1024 * 1024;
 /** 清扫周期：HG_SWEEP_INTERVAL_MS，默认 60s。 */
 const SWEEP_INTERVAL_MS = Config.num('runtime.sweep_interval_ms', 60) * 1000;
 
-/** 后台清扫器名（自检用）。 */
-const SWEEPER_NAME = 'hg-cache-sweeper';
-
 /** 清扫所有过期条目。 */
 function sweep() {
   const now = Date.now();
@@ -251,13 +248,6 @@ class DevicePool {
   }
 
   current() { return this.devices[this.idx % this.devices.length]; }
-
-  rotate() {
-    this.idx = (this.idx + 1) % this.devices.length;
-    return this.devices[this.idx];
-  }
-
-  size() { return this.devices.length; }
 }
 
 /** [0, n) 的随机长整数（对应 randomBytes(8).readBigUInt64BE() % n）。 */
@@ -298,7 +288,7 @@ function loadDevicePool(baseQuery, a, b, c) {
 }
 
 module.exports = {
-  cacheKey, cacheGet, cacheSet, weigh, sweep, sweeperActive, SWEEPER_NAME,
+  cacheKey, cacheGet, cacheSet, weigh, sweep, sweeperActive,
   sleep, Throttle, throttle,
   ApiError, RiskControlError, AuthExpiredError, UpstreamResponseError, checkResponse,
   RISK_CODES, AUTH_CODES, PoolDevice, DevicePool, loadDevicePool,
