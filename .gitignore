@@ -80,7 +80,7 @@ out
 
 # Nuxt.js build / generate output
 .nuxt
-# 仅根目录（裸 dist 会误伤 java/dist —— 该目录下的 JAR 需要入库）
+# 构建产物目录，不入库（仓库根 dist/ 是 pack.sh 的发行包输出）
 /dist
 .output
 
@@ -157,8 +157,12 @@ vite.config.ts.timestamp-*
 /server/config/apikeys.json
 
 # ---------- Java 后端（Node 已迁移为 Java） ----------
-# 编译中间产物不入库；java/dist/hongguo-api.jar 已入库，clone 后可直接运行
+# 构建产物不入库：java/build/ 是 javac 中间产物，java/dist/ 是编译出的 JAR。
+# 两者都由 scripts/build-java.sh 生成；pack.sh 打包前会先跑一次构建，
+# 因此发行包里照样自带 JAR —— 使用者不需要 JDK，也用不到构建脚本
+# （build-java 同样不随发行包分发，见 pack.sh）。
 /java/build/
+/java/dist/
 
 # pack.sh 的打包产物（5 个平台的发行 zip，约 450MB）落在仓库根的 dist/。
 # 上文第 84 行的 `/dist` 已锚定根目录并覆盖此处，此处补充说明以防误删：

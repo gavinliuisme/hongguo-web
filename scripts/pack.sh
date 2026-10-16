@@ -354,13 +354,13 @@ for plat in "${TARGETS[@]}"; do
   cp -r "$JRE_DIR" "$stage/jre"
 
   # ---- 平台专属脚本：只留同族 ----
+  # 只带 start/stop：jar 已在 [1/4] 构建好并拷入包内，构建脚本本身
+  # 不必随发行包分发 —— 使用发行包的人不需要 JDK，也用不到它。
   rm -f "$stage"/scripts/*.sh "$stage"/scripts/*.bat
   if [ "$family" = "bat" ]; then
-    cp "$SRC/scripts/start.bat" "$SRC/scripts/stop.bat" \
-       "$SRC/scripts/build-java.bat" "$stage/scripts/"
+    cp "$SRC/scripts/start.bat" "$SRC/scripts/stop.bat" "$stage/scripts/"
   else
-    cp "$SRC/scripts/start.sh" "$SRC/scripts/stop.sh" \
-       "$SRC/scripts/build-java.sh" "$stage/scripts/"
+    cp "$SRC/scripts/start.sh" "$SRC/scripts/stop.sh" "$stage/scripts/"
     chmod +x "$stage"/scripts/*.sh
   fi
 
@@ -442,6 +442,14 @@ for out in "${BUILT[@]}"; do
     else
       echo "    ✅ 仅含 .sh 脚本"
     fi
+  fi
+
+  # 构建脚本不进发行包：jar 已在 [1/4] 构建好，构建属于打包机的事
+  # 而不是使用者的 —— 发行包里只留运行所需
+  if grep -Eq '(^|/)build-java\.(sh|bat)$' <<<"$LIST"; then
+    echo "    ❌ 混入了 build-java 脚本"; FAILED=1
+  else
+    echo "    ✅ 不含 build-java 脚本"
   fi
 done
 

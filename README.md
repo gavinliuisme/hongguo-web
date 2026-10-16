@@ -73,12 +73,12 @@ cd hongguo-web
 
 发行包解压后进入解压目录，按平台执行：
 
-| 平台 | 启动 | 停止 | 构建 JAR |
-|---|---|---|---|
-| Windows | 双击 `scripts\start.bat` | 双击 `scripts\stop.bat` | 双击 `scripts\build-java.bat` |
-| Linux / macOS | `bash scripts/start.sh` | `bash scripts/stop.sh` | `bash scripts/build-java.sh` |
+| 平台 | 启动 | 停止 |
+|---|---|---|
+| Windows | 双击 `scripts\start.bat` | 双击 `scripts\stop.bat` |
+| Linux / macOS | `bash scripts/start.sh` | `bash scripts/stop.sh` |
 
-`start` 脚本会检查 Java 运行时、按需构建 API 服务 JAR，直接拉起服务，
+`start` 脚本会检查 Java 运行时与 JAR 是否就绪，直接拉起服务，
 并**自动打开浏览器**访问 **<http://127.0.0.1:8000/>**。
 `stop` 脚本按进程类型 + jar 路径双重匹配，不会误杀其他 Java 进程。
 
@@ -92,7 +92,7 @@ cd hongguo-web
     java -jar java/dist/hongguo-api.jar --stop         # 停掉在跑的实例
     java -jar java/dist/hongguo-api.jar --version      # 显示版本
 
-JAR 不存在时先按上表构建。
+JAR 已预编译进发行包，缺失通常是解压不完整；从源码运行时的构建方法见下一节。
 
 ### 自动打开浏览器
 
@@ -105,10 +105,20 @@ JAR 不存在时先按上表构建。
 
 ### API 服务 JAR 的构建
 
-`java/dist/hongguo-api.jar` **已入库**，clone 或发行包均开箱即用，
-无需 JDK、无需编译；`start` 脚本只在 JAR 缺失时（被删除）才会现场编译。
-注意：**修改 java/src 源码后需手动重跑上表中的构建命令更新 JAR**
-（脚本不做源码时间戳检测），此时才需要本机有 JDK 20+（或把 `jre` 换成完整 JDK）。
+`java/dist/hongguo-api.jar` 是**构建产物，不入库**（已加入 .gitignore）。
+因此从源码 checkout 运行时，首次需要先构建一次：
+
+```bash
+bash scripts/build-java.sh      # Linux / macOS
+scripts\build-java.bat          # Windows
+```
+
+`start` 脚本**不会**自动构建——检测到 JAR 缺失就提示如何处理并退出，
+因为编译需要 JDK，而多数使用者的机器上只有 JRE。
+发行包不受影响：它由 `scripts/pack.sh` 打包时现场构建并打入包内，解压即用。
+
+注意：**修改 java/src 源码后需手动重跑上面的命令更新 JAR**
+（脚本不做源码时间戳检测）。
 
 > 只需要 JDK 的 `javac` 与 `jar`，不需要 Maven / Gradle，不联网。
 
@@ -472,7 +482,7 @@ hongguo-web/
 ├── scripts/
 │   ├── start.bat / start.sh   一键启动
 │   ├── stop.bat / stop.sh     停止服务
-│   ├── build-java.bat / .sh   构建 API 服务 JAR（纯 javac，无需联网）
+│   ├── build-java.bat / .sh   构建 API 服务 JAR（纯 javac，无需联网；不随发行包分发）
 │   └── pack.sh                打包 5 个平台发行版（内置 JRE）
 ├── java/
 │   ├── src/com/hongguo/api/   Java 后端源码（22 个文件，零第三方依赖）
@@ -501,7 +511,7 @@ hongguo-web/
 │   │       ├── Crypto.java       MD5 / AES-128-CTR / hex
 │   │       ├── Http.java         HttpURLConnection 封装
 │   │       └── Log.java          日志与配置读取
-│   ├── dist/hongguo-api.jar   API 服务 JAR（已入库，clone 即用）
+│   ├── dist/hongguo-api.jar   API 服务 JAR（构建产物，不入库）
 │   └── build/                 编译中间产物
 ├── jre/                       Java 运行时（仅发行包内有；仓库不含）
 ├── server/
@@ -651,6 +661,13 @@ A：要。`pack.sh` 从 Adoptium 按平台下载对应 JRE，首次约 250MB。
 下载的 JRE 缓存在 `.pack-cache/`，同一平台重复打包不再联网。
 只想打一个平台时用 `bash scripts/pack.sh Linux-arm`，
 `bash scripts/pack.sh --list` 可列出全部平台名。
+
+**Q：发行包里没有 build-java 脚本，怎么重新构建？**
+
+A：`build-java.sh` / `build-java.bat` 只在**源码树**里。发行包内置的是
+打包时构建好的 jar，使用者不需要 JDK，`pack.sh` 也就不再把构建脚本
+拷进包里。改了源码或版本号，在源码树执行 `bash scripts/build-java.sh`
+（Windows 用 `scripts\build-java.bat`）重新构建，再打包即可。
 
 **Q：停止后端口还被占用？**
 
