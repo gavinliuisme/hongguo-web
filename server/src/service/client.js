@@ -8,9 +8,9 @@
  * 与 Node 版的两处架构变化：
  *  - 签名不再走外部 unidbg 服务，而是本进程内 PureSign 纯代码计算
  *    （branch==1 时抖动 _rticket 规避，实测服务端返回 code=0）；
- *  - 搜索与分集详情在 App 接口之外增加官网数据源（WebSource）：
- *    搜索官网优先（App 搜索需登录态，未登录恒空），分集详情 App 优先、
- *    失败回落官网。
+ *  - 搜索与分集详情均以 App 签名接口为主，官网数据源（WebSource）兜底：
+ *    搜索 App 无结果或请求失败时回落官网搜索页，分集详情 App 失败时
+ *    回落官网分集页。
  *
  * Node 适配：纯解析/组装函数保持同步；所有发网络请求的函数写成 async
  * （返回 Promise）；Java 阻塞式 sleep/throttle 改用 await。
@@ -607,11 +607,7 @@ async function search(query, maxItemsArg) {
 }
 
 /**
- * 搜索的一页（供「加载更多」续页）。
- *
- * 数据源优先级：官网搜索页（_ROUTER_DATA.searchList，服务端渲染、免签）
- * -> App 签名搜索接口。App 搜索需要登录态，未登录时恒返回空，
- * 因此官网命中即直接采用；官网无结果（含网络失败）才回落 API。
+ * App 签名搜索的一页（/reading/bookapi/search/tab/v 综合 tab）。
  *
  * search 接口的 passback/search_id/offset 是上游游标，跨页必须原样回传，
  * 否则每次都从第 1 页重查。
@@ -620,30 +616,11 @@ async function search(query, maxItemsArg) {
  * 只能从头抓够 skip + limit 条再丢掉前 skip 条。因此续页代价随页码增长，
  * 但结果正确 —— 早先的实现完全忽略 skip、每次都返回同一批前 limit 条，
  * 前端按 id 去重后得到空列表，于是误报"没有更多了"。
+ *
+ * 上游无结果时返回空页；请求彻底失败（风控 / 网络 / 签名被拒）时抛错，
+ * 由调用方决定兜底。
  */
-async function searchPage(query, maxItemsArg, skip) {
-  const limit = Math.max(1, Math.min(
-    maxItemsArg > 0 ? maxItemsArg : Log.envInt('HG_SEARCH_MAX_ITEMS', 20), 40));
-  const skipN = Math.max(0, skip);
-
-  // ---- 官网搜索优先 ----
-  const ckWeb = Safeguards.cacheKey('websearch', query);
-  let webItems = null;
-  const cachedWeb = Safeguards.cacheGet(ckWeb);
-  if (Array.isArray(cachedWeb)) webItems = cachedWeb;
-  if (webItems === null) {
-    const web = await WebSource.search(query);
-    if (web.length > 0) {
-      webItems = webSearchItems(web);
-      Safeguards.cacheSet(ckWeb, webItems, 600);
-    }
-  }
-  if (webItems !== null && webItems.length > 0) {
-    // 官网一次返回全部命中（约 10 条），没有后续页
-    return Page.slice(webItems, skipN, limit, false);
-  }
-
-  // ---- 回落 App 签名搜索 ----
+async function appSearchPage(query, limit, skipN) {
   // 游标状态可复用：同一关键词的续页从头重抓上游，靠这里的缓存兜住重复请求
   const ck = Safeguards.cacheKey('searchp', query, limit, skipN);
   const cached = Safeguards.cacheGet(ck);
@@ -737,6 +714,51 @@ async function searchPage(query, maxItemsArg, skip) {
   const page = Page.slice(results, skipN, limit, hasMore);
   Safeguards.cacheSet(ck, [page.items, page.hasMore, page.nextSkip], 600);
   return page;
+}
+
+/**
+ * 搜索的一页（供「加载更多」续页）。
+ *
+ * 数据源优先级：App 签名搜索（字段全、有分页游标）-> 官网搜索页
+ * （_ROUTER_DATA.searchList，服务端渲染、免签，一次返回全部命中、
+ * 无后续页）。App 无结果或请求失败时回落官网；官网也无结果时，若 App
+ * 是异常失败则把该异常抛给调用方，否则返回空页。
+ */
+async function searchPage(query, maxItemsArg, skip) {
+  const limit = Math.max(1, Math.min(
+    maxItemsArg > 0 ? maxItemsArg : Log.envInt('HG_SEARCH_MAX_ITEMS', 20), 40));
+  const skipN = Math.max(0, skip);
+
+  // ---- App 签名搜索优先 ----
+  let appError = null;
+  try {
+    const appPage = await appSearchPage(query, limit, skipN);
+    if (appPage.items.length > 0) return appPage;
+  } catch (e) {
+    appError = e;
+    Log.warn('App 搜索失败，回落官网搜索 (' + query + ')：' + e.message);
+  }
+
+  // ---- 官网搜索兜底 ----
+  const ckWeb = Safeguards.cacheKey('websearch', query);
+  let webItems = null;
+  const cachedWeb = Safeguards.cacheGet(ckWeb);
+  if (Array.isArray(cachedWeb)) webItems = cachedWeb;
+  if (webItems === null) {
+    const web = await WebSource.search(query);
+    if (web.length > 0) {
+      webItems = webSearchItems(web);
+      Safeguards.cacheSet(ckWeb, webItems, 600);
+    }
+  }
+  if (webItems !== null && webItems.length > 0) {
+    // 官网一次返回全部命中（约 10 条），没有后续页
+    return Page.slice(webItems, skipN, limit, false);
+  }
+
+  // 两边都无结果：App 是异常失败就把异常抛给调用方，否则返回空页
+  if (appError !== null) throw appError;
+  return Page.slice([], skipN, limit, false);
 }
 
 /** 取单剧元信息 + 剧集列表（缓存 6 小时）。App 详情失败时回落官网分集页。 */
