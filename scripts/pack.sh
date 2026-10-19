@@ -5,7 +5,7 @@
 #  为每个目标平台产出一个独立 zip，内含该平台对应的 Node 运行时，
 #  解压即用、目标机无需预装 Node。
 #
-#  产物（版本号取自 server/config/config.json 的 version 字段）：
+#  产物（版本号取自 package.json 的 version 字段）：
 #    红果web-<版本>-Windows-x64.zip     仅 .bat 脚本
 #    红果web-<版本>-Windows-arm.zip     仅 .bat 脚本
 #    红果web-<版本>-Linux-x64.zip       仅 .sh 脚本
@@ -83,10 +83,12 @@ for t in "${TARGETS[@]}"; do
 done
 
 # ---------- 版本号：单一数据源 ----------
+# package.json 的 version 字段。head -1 是保平安：scripts.version 那行
+# 也含 "version": "..." 字样，但真版本号在前，第一个匹配即所求。
 VERSION="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
-  "$SRC/server/config/config.json" | head -1)"
+  "$SRC/package.json" | head -1)"
 if [ -z "$VERSION" ]; then
-  echo "[错误]未能从 server/config/config.json 读到 version字段。" >&2
+  echo "[错误]未能从 package.json 读到 version字段。" >&2
   exit 1
 fi
 
@@ -102,7 +104,7 @@ fi
 # 都还带着。
 PKG_ROOT="hongguo-web-$VERSION"
 
-echo "版本: $VERSION   (来自 server/config/config.json)"
+echo "版本: $VERSION   (来自 package.json)"
 echo "输出: $OUTDIR"
 echo
 

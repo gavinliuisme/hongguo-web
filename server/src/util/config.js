@@ -162,28 +162,20 @@ function bool(key, def) {
   return parseBool(Json.optStr(o, ''), def);
 }
 
-/** 从 package.json 读版本号（构建期快照，仅当配置文件读不到时的兜底）。 */
-function versionFromPackage() {
+/**
+ * 当前项目版本号，取自 package.json 的 version 字段（全项目唯一来源）。
+ * 读不到时返回 'unknown'，不报错。
+ */
+function version() {
   try {
     const p = path.join(ROOT, 'package.json');
-    if (!fs.existsSync(p)) return null;
+    if (!fs.existsSync(p)) return 'unknown';
     const j = Json.parseObject(fs.readFileSync(p, 'utf8'));
     const v = Json.optStr(j.version, '').trim();
-    return v === '' ? null : v;
+    return v === '' ? 'unknown' : v;
   } catch (e) {
-    return null;
+    return 'unknown';
   }
-}
-
-/** 当前项目版本号，取自配置文件顶层的 version。 */
-function version() {
-  const o = get('version');
-  if (o !== null && o !== undefined) {
-    const s = Json.optStr(o, '').trim();
-    if (s !== '') return s;
-  }
-  const fromPkg = versionFromPackage();
-  return fromPkg !== null ? fromPkg : 'unknown';
 }
 
 /** 列出全部可配置键，供 --help 与文档同步。 */

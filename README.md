@@ -30,7 +30,7 @@
 | Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.2-Linux-arm.zip` |
 | macOS Apple 芯片（M 系列） | `hongguo-web-1.1.2-macOS-arm.zip` |
 
-> 文件名里的版本号就是 `server/config/config.json` 的 `version` 字段，
+> 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
 >
 > 五个包内置的都是**目标平台原生的** Node 运行时（nodejs.org 对

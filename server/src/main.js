@@ -32,7 +32,7 @@ async function main(argv = process.argv.slice(2)) {
 
   for (const a of args) {
     if (a === '--version' || a === '-v') {
-      // 版本号取自 config.json，详见 Config.version()
+      // 版本号取自 package.json，详见 Config.version()
       console.log('hongguo-api ' + Config.version());
       return 0;
     }
