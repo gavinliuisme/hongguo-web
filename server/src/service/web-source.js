@@ -29,15 +29,15 @@ const WEB_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
  * 官网搜索。
  *
  * @param {string} keyword 关键词
- * @returns {Array<object>} 结果列表，每项含 series_id / series_title /
+ * @returns {Promise<Array<object>>} 结果列表，每项含 series_id / series_title /
  *   series_intro / cover / episode_cnt；搜索失败或空结果返回空列表
  */
-function search(keyword) {
+async function search(keyword) {
   const out = [];
   const kw = keyword === null || keyword === undefined ? '' : String(keyword).trim();
   if (kw === '') return out;
   try {
-    const html = fetchHtml(SITE_ORIGIN + '/search/' + Http.urlencode(kw));
+    const html = await fetchHtml(SITE_ORIGIN + '/search/' + Http.urlencode(kw));
     const ki = html.indexOf('"searchList"');
     if (ki < 0) return out;
     const bi = html.indexOf('[', ki);
@@ -70,15 +70,15 @@ function search(keyword) {
  * 官网分集列表。
  *
  * @param {string} seriesId 剧 id
- * @returns {object|null} {series_id, series_title, cover, total,
+ * @returns {Promise<object|null>} {series_id, series_title, cover, total,
  *   web_accessible_episodes, episodes:[{vid, vid_index, title, web_available}]}；
  *   失败返回 null
  */
-function episodes(seriesId) {
+async function episodes(seriesId) {
   const sid = seriesId === null || seriesId === undefined ? '' : String(seriesId).trim();
   if (sid === '') return null;
   try {
-    const html = fetchHtml(SITE_ORIGIN + '/player/' + Http.urlencode(sid));
+    const html = await fetchHtml(SITE_ORIGIN + '/player/' + Http.urlencode(sid));
     const m = /"vid_list"\s*:\s*\[([^\]]*)\]/.exec(html);
     if (!m) return null;
     const vids = [];
