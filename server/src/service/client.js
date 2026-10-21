@@ -772,9 +772,15 @@ async function getEpisodes(seriesId) {
     const j = await api('POST', '/novel/player/multi_video_detail/preload/v1',
       episodesBody(sid), null, 3, true);
     const data = Json.optObj(j.data);
-    const vd = data === null ? null
-      : Json.optObj(Json.optObj(data[sid]).video_data);
+    const entry = data === null ? null : Json.optObj(data[sid]);
+    const vd = entry === null ? null : Json.optObj(entry.video_data);
     const result = parseEpisodeDetail(sid, vd);
+    // 上游风控时会返回 {"code":0,"data":[]} 之类的空壳 —— HTTP 200、
+    // 不抛错，若不识破就会把「空剧集」当正常结果交付（缓存 6 小时），
+    // 用户看到「该剧暂无剧集」。空结果一律视为失败，交官网兜底。
+    if (result.episodes.length === 0) {
+      throw new Error('App 未返回剧集列表（空 data，疑似风控）');
+    }
     Safeguards.cacheSet(ck, result, 21600);
     return result;
   } catch (e) {
@@ -820,8 +826,8 @@ async function getEpisodesBatch(seriesIds, batchSizeArg) {
         episodesBody(batch.join(',')), null, 3, true);
       const data = Json.optObj(j.data);
       for (const sid of batch) {
-        const vd = data === null ? null
-          : Json.optObj(Json.optObj(data[sid]).video_data);
+        const entry = data === null ? null : Json.optObj(data[sid]);
+        const vd = entry === null ? null : Json.optObj(entry.video_data);
         if (vd === null || Object.keys(vd).length === 0) {
           const f = Json.obj();
           f.series_id = sid;

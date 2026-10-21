@@ -17,14 +17,87 @@ class JsonException extends Error {
   }
 }
 
-/** 解析 JSON 文本；非法输入抛 JsonException。null/undefined 返回 null。 */
+/**
+ * 解析 JSON 文本；非法输入抛 JsonException。null/undefined 返回 null。
+ *
+ * 保精度处理：原生 JSON.parse 把超过 2^53 的整数字面量读成双精度浮点，
+ * 末位失真 —— 上游 series_id / vid 均为 19 位（如 7696409867476552729
+ * 会变成 7696409867476553000），随后按此 ID 查上游一律空结果，表现为
+ * 「该剧暂无剧集」、播放取不到直链。故先把字符串字面量之外的超大整数
+ * 加引号，让它们以字符串形态进入下游；全链路对 ID 的消费（optStr /
+ * String()）本就按字符串处理，语义不变，小数与科学计数法原样保留。
+ */
 function parse(text) {
   if (text === null || text === undefined) return null;
   try {
-    return JSON.parse(text);
+    return JSON.parse(/\d{16,}/.test(text) ? quoteBigInts(text) : text);
   } catch (e) {
     throw new JsonException(e.message);
   }
+}
+
+/**
+ * 扫描 JSON 文本，把字符串字面量之外的「纯整数字面量且超出
+ * Number.MAX_SAFE_INTEGER」加上引号（实现见 parse 注释）。
+ * 只做单次线性扫描；调用方已用 \d{16,} 预检，常规响应不走这里。
+ */
+function quoteBigInts(text) {
+  let out = '';
+  let i = 0;
+  const n = text.length;
+  let inStr = false;
+  while (i < n) {
+    const c = text[i];
+    if (inStr) {
+      out += c;
+      if (c === '\\' && i + 1 < n) {
+        // 转义序列连同下一字符一起吞掉，避免 \" 提前结束字符串
+        out += text[i + 1];
+        i += 2;
+        continue;
+      }
+      if (c === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      out += c;
+      i++;
+      continue;
+    }
+    // 数字 token 起点：数字，或值位置的负号（JSON 里 - 只出现在值位置）。
+    // 整数、小数、指数属于同一 token，先整体扫完再判断；只对「纯整数
+    // 且超出安全范围」的加引号，小数 / 科学计数法原样，不引入语义变化。
+    if (c === '-' || (c >= '0' && c <= '9')) {
+      let j = i;
+      if (c === '-') j++;
+      const intStart = j;
+      while (j < n && text.charCodeAt(j) >= 48 && text.charCodeAt(j) <= 57) j++;
+      const intEnd = j;
+      if (text[j] === '.') {
+        j++;
+        while (j < n && text.charCodeAt(j) >= 48 && text.charCodeAt(j) <= 57) j++;
+      }
+      if (text[j] === 'e' || text[j] === 'E') {
+        j++;
+        if (text[j] === '+' || text[j] === '-') j++;
+        while (j < n && text.charCodeAt(j) >= 48 && text.charCodeAt(j) <= 57) j++;
+      }
+      const isPureInt = intEnd === j;
+      if (isPureInt && intEnd > intStart
+          && Math.abs(Number(text.slice(intStart, intEnd))) > Number.MAX_SAFE_INTEGER) {
+        out += '"' + text.slice(i, j) + '"';
+      } else {
+        out += text.slice(i, j);
+      }
+      i = j;
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
 }
 
 /** 解析并要求顶层是对象；空串返回空对象（宽容上游空体）。 */
