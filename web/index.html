@@ -110,6 +110,24 @@
       </div>
       <div id="pEpGrid" class="ep-grid"></div>
     </div>
+    <!-- 下载范围卡片：与选集卡片同款贴附样式（fixed、无遮罩、按钮上方展开） -->
+    <div id="dlModal" class="dl-card" hidden>
+      <div class="ep-card-head">
+        <span>下载剧集</span>
+        <button id="dlClose" class="ep-card-x" title="关闭">✕</button>
+      </div>
+      <p class="muted" id="dlHint"></p>
+      <div class="row dl-range">
+        <label>起始集 <input id="dlStart" type="number" min="1" step="1"></label>
+        <span class="muted">至</span>
+        <label>结束集 <input id="dlEnd" type="number" min="1" step="1"></label>
+      </div>
+      <div class="row dl-ops">
+        <button id="dlCancel" class="btn">取消</button>
+        <button id="dlGo" class="btn primary">开始下载</button>
+      </div>
+      <p class="muted dl-note">任务在服务端后台执行，发起后可点击主页右上角『⤓』按钮查看进度。</p>
+    </div>
   </div>
 </div>
 
@@ -125,27 +143,6 @@
     </div>
     <p id="libHint" class="muted lib-hint"></p>
     <div id="libList" class="lib-list"></div>
-  </div>
-</div>
-
-<!-- 下载弹层：选择集数范围，启动后台下载任务并展示进度 -->
-<div id="dlModal" class="modal" hidden>
-  <div class="modal-card narrow">
-    <div class="modal-head">
-      <h3>下载剧集</h3>
-      <button id="dlClose" class="icon-btn">✕</button>
-    </div>
-    <p class="muted" id="dlHint"></p>
-    <div class="row dl-range">
-      <label>起始集 <input id="dlStart" type="number" min="1" step="1"></label>
-      <span class="muted">至</span>
-      <label>结束集 <input id="dlEnd" type="number" min="1" step="1"></label>
-    </div>
-    <div class="row dl-ops">
-      <button id="dlCancel" class="btn">取消</button>
-      <button id="dlGo" class="btn primary">开始下载</button>
-    </div>
-    <p class="muted dl-note">任务在服务端后台执行，发起后可点击主页右上角「⤓」按钮查看进度。</p>
   </div>
 </div>
 

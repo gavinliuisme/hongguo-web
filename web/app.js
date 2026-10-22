@@ -925,6 +925,8 @@
       ctx.total = eps.length;
       $('pTitle').textContent = ctx.title;
       buildEpGrid(eps);
+      closeEpCard();
+      closeDlModal(); // 换剧：关掉上一部残留的范围卡片
       playerEl.hidden = false;
       // 简介交给悬浮气泡；集数按钮只显示当前集数（每集刷新，不再消失）
       setAbstract(meta.abstract || '');
@@ -1000,6 +1002,7 @@
     setAbstract(''); // 单集播放无简介，按钮隐藏
     $('pEpGrid').innerHTML = '';
     closeEpCard();
+    closeDlModal();
     syncFavBtn(); // 单集无 series_id → 收藏按钮隐藏
     syncRelBtn(); // 单集也带剧名，有就能搜关联
     syncDlBtn(); // 单集无 series_id → 下载按钮隐藏
@@ -1294,15 +1297,35 @@
     if (dlTimer !== null) { clearInterval(dlTimer); dlTimer = null; }
   }
 
-  /** 打开范围选择卡片；本剧已有任务在跑时，直接打开进度卡片。 */
+  /**
+   * 下载范围卡片定位：与选集卡片同款（fixed 贴附「下载」按钮，向上优先），
+   * 不全屏、无遮罩；按钮在播放器底部，向上展开才不会顶出视口。
+   */
+  function placeDlCard() {
+    if (dlModal.hidden) return;
+    const b = $('pDlBtn').getBoundingClientRect();
+    const gap = 8;
+    const w = dlModal.offsetWidth;
+    const h = dlModal.offsetHeight;
+    // 水平：与按钮左对齐，超出右边界则夹紧
+    let left = b.left;
+    if (left + w > window.innerWidth - 8) left = window.innerWidth - w - 8;
+    if (left < 8) left = 8;
+    // 垂直：默认向上（按钮在底部）；上方也放不下才向下
+    let top = b.top - h - gap;
+    if (top < 8) top = Math.min(window.innerHeight - h - 8, b.bottom + gap);
+    if (top < 8) top = 8;
+    dlModal.style.left = `${Math.round(left)}px`;
+    dlModal.style.top = `${Math.round(top)}px`;
+  }
+
+  /** 打开范围选择卡片；本剧已有任务在跑时，仅提示去顶栏查看进度。 */
   function openDlModal() {
     const eps = ctx.episodes;
     if (!eps.length) { toast('当前没有可下载的剧集'); return; }
     const running = dlTasks.find((t) => t.series_id === ctx.seriesId && t.status === 'running');
     if (running !== undefined) {
-      toast('该剧的下载任务已在进行中，已为你打开下载进度卡片');
-      dlModal.hidden = true;
-      openDlProg();
+      toast('该剧的下载任务已在进行中，点击主页右上角『⤓』按钮查看进度');
       return;
     }
     const first = Number(eps[0].index) || 1;
@@ -1319,6 +1342,7 @@
     $('dlGo').disabled = false;
     $('dlGo').textContent = '开始下载';
     dlModal.hidden = false;
+    placeDlCard();
   }
 
   /** 关闭范围选择卡片（不影响任何后台任务）。 */
@@ -1354,12 +1378,9 @@
       syncDlEntryBtn();
       pollDlTasks();
       closeDlModal();
-      // 播放器弹层会盖住顶栏，此时用户点不到右上角入口：
-      // 直接展开进度卡片给即时反馈，Toast 再告知常驻入口的位置。
-      openDlProg();
       $('dlGo').disabled = false;
       $('dlGo').textContent = '开始下载';
-      toast('下载任务已启动，点击右上角「⤓」按钮查看进度', 4000);
+      toast('下载任务已启动，点击主页右上角『⤓』按钮查看进度', 4000);
     }).catch((e) => {
       $('dlGo').disabled = false;
       $('dlGo').textContent = '开始下载';
@@ -1484,10 +1505,15 @@
   $('dlClose').addEventListener('click', closeDlModal);
   $('dlCancel').addEventListener('click', closeDlModal);
   $('dlGo').addEventListener('click', startDownload);
-  // 点遮罩空白处关闭（只认遮罩本身，与播放器弹层的处理保持一致）
-  dlModal.addEventListener('click', (e) => {
-    if (e.target === dlModal) closeDlModal();
+  // 贴附卡片（无遮罩）：点卡片外部关闭、Esc 关闭、窗口变化重新定位
+  document.addEventListener('click', (e) => {
+    if (!dlModal.hidden
+      && !dlModal.contains(e.target) && !$('pDlBtn').contains(e.target)) closeDlModal();
   });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !dlModal.hidden) closeDlModal();
+  });
+  window.addEventListener('resize', () => { if (!dlModal.hidden) placeDlCard(); });
   $('dlBtn').addEventListener('click', openDlProg);
   $('dlProgClose').addEventListener('click', closeDlProg);
   $('dlProgDone').addEventListener('click', closeDlProg);
@@ -1720,6 +1746,7 @@
     setAbstract('');
     toggleInfo(false);
     closeEpCard();
+    closeDlModal();
     // 清掉主体后同步收藏按钮：没有可收藏的剧时按钮应隐藏，
     // 否则上一次播放残留的 ★/☆ 状态会留在空播放器上。
     ctx.seriesId = '';

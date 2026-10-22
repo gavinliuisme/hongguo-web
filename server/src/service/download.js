@@ -195,7 +195,7 @@ async function start(seriesId, startEp, endEp) {
   const title = Json.optStr(meta === null ? null : meta.title, '');
   const t = createTask(sid, title === '' ? sid : title, sel);
   Log.info('下载任务 ' + t.id + ' 开始：' + t.title + ' 第 ' + lo + '-' + hi
-    + ' 集（共 ' + t.total + ' 集），保存目录 ' + t.dir);
+    + ' 集（共 ' + t.total + ' 集）');
 
   // 故意不 await：让任务在后台跑，HTTP 请求立即返回。
   // run 内部已兜住所有异常（逐集 try + 总体 catch），这里再包一层是
@@ -273,7 +273,7 @@ async function run(t, sel) {
     ? '，失败 ' + t.failed.length + ' 集（集号：' + t.failed.map((f) => f.index).join('、') + '）'
     : '';
   Log.info('下载任务 ' + t.id + ' 结束：' + t.title + ' 成功 ' + t.done + '/'
-    + t.total + ' 集' + failPart + '，用时 ' + secs + 's，目录 ' + t.dir);
+    + t.total + ' 集' + failPart + '，用时 ' + secs + 's');
 }
 
 module.exports = {
