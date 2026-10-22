@@ -785,14 +785,25 @@ async function getEpisodes(seriesId) {
     return result;
   } catch (e) {
     // App 详情失败（风控 / 网络 / 签名被拒）时回落官网分集页：
-    // 官网只有 vid 列表，没有简介、演员等富信息，但保证分集可见
-    Log.info('App 剧集详情失败，回落官网分集 (' + sid + ')：' + e.message);
-    const web = await WebSource.episodes(sid);
+    // 官网只有 vid 列表，没有简介、演员等富信息，但保证分集可见。
+    // App 失败回落官网是常态（风控空响应等），此处不输出日志避免刷屏；
+    // 仅当官网链路同样失败、确实无法获取剧集信息时，才在下方汇总输出一行
+    // （合并 App 侧与官网侧两个原因，不再分别打印）。
+    let web = null;
+    let webErr = '';
+    try {
+      web = await WebSource.episodes(sid);
+    } catch (e2) {
+      webErr = e2 && e2.message ? e2.message : String(e2);
+    }
     if (web !== null && web !== undefined) {
       const result = webEpisodesToDetail(web);
       Safeguards.cacheSet(ck, result, 21600);
       return result;
     }
+    Log.warn('App 与官网分集链路均失败，无法获取剧集信息 (' + sid + ')：'
+      + 'App - ' + e.message + '；官网 - '
+      + (webErr !== '' ? webErr : '未解析到分集数据'));
     throw e;
   }
 }

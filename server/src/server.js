@@ -17,6 +17,7 @@ const path = require('path');
 const KeyStore = require('./core/keystore');
 const Safeguards = require('./core/safeguards');
 const Client = require('./service/client');
+const Download = require('./service/download');
 const Res = require('./service/res');
 const Stream = require('./service/stream');
 const Http = require('./util/http');
@@ -289,6 +290,7 @@ class Server {
         '/episodes?series_id=', '/play?series_id=&ep=1-10',
         '/stream?series_id=&ep=1', '/stream?vid=&quality=1080p',
         '/prewarm?vid=', '/stats',
+        '/download/task（POST {series_id,start,end} 批量下载剧集）',
       ];
       Res.json(req, res, 200, m);
       return;
@@ -634,6 +636,48 @@ class Server {
       return;
     }
 
+    // ---- 批量下载剧集（任务制）----
+    // POST /download/task  启动任务：{series_id, start?, end?}，后台执行，立即返回任务快照
+    // GET  /download/task?id=  查询进度：done/total/failed/status
+    if (pathname === '/download/task') {
+      if (method === 'POST') {
+        const payload = await readJson(req);
+        const sid = payload.series_id !== undefined && payload.series_id !== null
+          ? String(payload.series_id).trim() : '';
+        if (sid === '') {
+          Res.fail(req, res, 400, '缺少 series_id');
+          return;
+        }
+        const startEp = intOrNull(payload.start);
+        const endEp = intOrNull(payload.end);
+        let t;
+        try {
+          t = await Download.start(sid, startEp, endEp);
+        } catch (e) {
+          Res.fail(req, res, 400, String(e && e.message !== undefined ? e.message : e));
+          return;
+        }
+        const m = Json.obj();
+        m.ok = true;
+        m.task = Download.snapshot(t);
+        Res.json(req, res, 200, m);
+        return;
+      }
+      if (method === 'GET') {
+        const id = q.id !== undefined ? q.id : '';
+        const t = Download.get(String(id));
+        if (t === null) {
+          Res.fail(req, res, 404, '任务不存在或已过期');
+          return;
+        }
+        const m = Json.obj();
+        m.ok = true;
+        m.task = Download.snapshot(t);
+        Res.json(req, res, 200, m);
+        return;
+      }
+    }
+
     if (method === 'GET' && pathname === '/stats') {
       if (!this.checkAdmin(req, q)) {
         Res.fail(req, res, 401, '需要 admin_token');
@@ -875,6 +919,13 @@ function header(req, name) {
   if (v === undefined || v === null) return null;
   if (Array.isArray(v)) return v.length > 0 ? v[0] : null;
   return String(v);
+}
+
+/** 把请求体/参数里的集号转成整数；缺失或非法返回 null（调用方按「不限制」处理）。 */
+function intOrNull(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = Number.parseInt(String(v), 10);
+  return Number.isNaN(n) ? null : n;
 }
 
 module.exports = { Server };

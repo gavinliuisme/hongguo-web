@@ -960,6 +960,118 @@ body {
 }
 .toast[hidden] { display: none; }
 
+/* ---------- 播放器底部左侧：集数按钮 + 下载按钮 ---------- */
+.foot-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  justify-self: start;
+}
+
+/* ---------- 下载范围卡片 ----------
+   与选集卡片（.ep-card）同款：fixed 贴附、无遮罩、不全屏，
+   由 JS 定位到「下载」按钮上方；宽度比选集卡片固定，容纳起止输入与按钮。 */
+.dl-card {
+  position: fixed;
+  z-index: 96;
+  width: min(320px, calc(100vw - 16px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-elev2);
+  box-shadow: var(--shadow);
+}
+.dl-card[hidden] { display: none; }
+#dlHint { margin: 0 0 2px; font-size: 12px; line-height: 1.6; }
+.dl-range { align-items: center; gap: 10px; margin: 10px 0 2px; }
+.dl-range label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.dl-range input {
+  width: 72px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-elev2);
+  color: var(--fg);
+  font-size: 14px;
+}
+.dl-range input:focus { outline: none; border-color: var(--brand); }
+.dl-ops { justify-content: flex-end; gap: 10px; margin-top: 10px; }
+.dl-note { margin: 10px 0 0; font-size: 12px; line-height: 1.6; }
+
+/* 顶栏「下载进度」按钮：常驻显示（出现/消失会造成顶栏布局跳变）。
+   相对定位供角标锚定；角标绝对定位，显示/隐藏不影响其他按钮布局。 */
+#dlBtn { position: relative; }
+.icon-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  pointer-events: none;
+}
+.icon-badge[hidden] { display: none; }
+
+/* ---------- 下载进度卡片（顶栏「⤓」打开） ---------- */
+#dlProgModal .modal-card { width: min(560px, 100%); }
+.dl-prog-hint { margin: 0 0 12px; font-size: 12px; line-height: 1.6; }
+.dl-prog-list { max-height: 52vh; overflow-y: auto; }
+.dl-task {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.dl-task:first-child { border-top: none; }
+.dl-task-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dl-task-title {
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dl-task-state { flex-shrink: 0; font-size: 12px; color: var(--fg-mute); }
+.dl-task-state.ok { color: var(--ok); }
+.dl-task-state.err { color: var(--err); }
+.dl-task-sub { margin: 8px 0 0; font-size: 12px; line-height: 1.6; word-break: break-all; }
+.dl-prog-ops { justify-content: flex-end; gap: 10px; margin-top: 16px; }
+
+/* 任务进度条（进度卡片与适用范围共用） */
+.dl-bar {
+  height: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg-elev2);
+  overflow: hidden;
+}
+.dl-bar-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(92deg, var(--brand), var(--brand-2));
+  transition: width .3s;
+}
+
 @media (max-width: 640px) {
   .sub { display: none; }
   #search { width: 110px; }

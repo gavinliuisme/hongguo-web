@@ -40,6 +40,8 @@ const ENV_OF = {
   'runtime.cache.img_max_mb': 'HG_IMG_CACHE_MAX_MB',
   'runtime.cache.img_max_kb': 'HG_IMG_MAX_KB',
   'runtime.throttle_ms': 'HG_THROTTLE_MS',
+  'runtime.download.dir': 'HONGGUO_DOWNLOAD_DIR',
+  'runtime.download.concurrency': 'HONGGUO_DOWNLOAD_CONCURRENCY',
   'runtime.rate_buckets_max': 'HG_RATE_BUCKETS_MAX',
   'runtime.rate_bucket_idle_ms': 'HG_RATE_BUCKET_IDLE_MS',
   'runtime.sweep_interval_ms': 'HG_SWEEP_INTERVAL_MS',
