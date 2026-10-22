@@ -116,8 +116,9 @@ async function episodes(seriesId) {
     out.source = 'web';
     return out;
   } catch (e) {
-    Log.warn('官网分集失败(' + sid + '): ' + e.message);
-    return null;
+    // 不再单独输出日志：调用方（client.getEpisodes）在官网兜底也失败时
+    // 会输出汇总日志，此处抛出失败原因供其合并，避免双失败刷成两行
+    throw e;
   }
 }
 
