@@ -275,6 +275,8 @@ function printConfig() {
   // data_dir 只承载视频缓存（落在 server/stream-cache）；设备身份与
   // 密钥（均落在 apikeys.json）固定位于 server/config，不随本项迁移。
   console.log('    data_dir(视频缓存) : ' + Config.str('runtime.data_dir', 'server'));
+  console.log('    download_dir(剧集下载) : ' + Config.str('runtime.download.dir', 'download')
+    + '（并发 ' + Config.num('runtime.download.concurrency', 2) + '）');
   console.log('  ' + '-'.repeat(56));
   console.log();
 }

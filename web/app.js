@@ -930,6 +930,7 @@
       setAbstract(meta.abstract || '');
       syncFavBtn();
       syncRelBtn();
+      syncDlBtn();
       updatePMeta();
       // 标记本次打开：playAt 首次起播时会消费它（用于刷新历史时间戳并置顶）
       ctx.freshOpen = true;
@@ -1001,6 +1002,7 @@
     closeEpCard();
     syncFavBtn(); // 单集无 series_id → 收藏按钮隐藏
     syncRelBtn(); // 单集也带剧名，有就能搜关联
+    syncDlBtn(); // 单集无 series_id → 下载按钮隐藏
     updatePMeta(); // 无剧集 → 集数按钮自动隐藏
     playerEl.hidden = false;
     play(vid);
@@ -1257,6 +1259,256 @@
     window.addEventListener('resize', () => { if (!epCard.hidden) placeEpCard(); });
   }
 
+  /* ---------- 下载剧集（播放器内发起，顶栏查看进度） ---------- */
+  /*
+   * 两步走：播放器里的「下载」按钮只负责选范围、发起任务（服务端后台执行，
+   * 失败自动重试，进度不依赖本页面保持打开）；进度统一在主页右上角「⤓」
+   * 按钮弹出的卡片里查看，多个剧的任务并列展示。
+   *
+   * 前端本地维护一份任务表 dlTasks（服务端任务表重启即丢，这里只作视图层）：
+   * 有记录才显示顶栏按钮，角标是进行中任务数；轮询只在有任务运行时开启
+   * （1.5s 一次 ≈ 40 次/分钟，低于默认限流 120/分钟）。
+   */
+  const dlModal = $('dlModal');
+  const dlProgModal = $('dlProgModal');
+  const dlTasks = []; // {id, series_id, title, total, done, failed, status, dir, error}
+  let dlTimer = null;
+
+  /** 同步播放器内「下载」按钮：有剧集列表（连续剧）才显示，单集播放隐藏。 */
+  function syncDlBtn() {
+    $('pDlBtn').hidden = !(ctx.seriesId && ctx.episodes.length);
+  }
+
+  /**
+   * 同步顶栏「下载进度」按钮：常驻显示（出现/消失会让顶栏布局跳变），
+   * 只更新 title 与角标；角标绝对定位，显示/隐藏不影响其他按钮布局。
+   */
+  function syncDlEntryBtn() {
+    const running = dlTasks.filter((t) => t.status === 'running').length;
+    $('dlBtn').title = running > 0 ? '下载进度（' + running + ' 个任务进行中）' : '下载进度';
+    $('dlBadge').hidden = running === 0;
+    $('dlBadge').textContent = String(running);
+  }
+
+  function stopDlPoll() {
+    if (dlTimer !== null) { clearInterval(dlTimer); dlTimer = null; }
+  }
+
+  /** 打开范围选择卡片；本剧已有任务在跑时，直接打开进度卡片。 */
+  function openDlModal() {
+    const eps = ctx.episodes;
+    if (!eps.length) { toast('当前没有可下载的剧集'); return; }
+    const running = dlTasks.find((t) => t.series_id === ctx.seriesId && t.status === 'running');
+    if (running !== undefined) {
+      toast('该剧的下载任务已在进行中，已为你打开下载进度卡片');
+      dlModal.hidden = true;
+      openDlProg();
+      return;
+    }
+    const first = Number(eps[0].index) || 1;
+    const last = Number(eps[eps.length - 1].index) || eps.length;
+    $('dlStart').value = first;
+    $('dlStart').min = first;
+    $('dlStart').max = last;
+    $('dlEnd').value = last;
+    $('dlEnd').min = first;
+    $('dlEnd').max = last;
+    $('dlHint').textContent = ctx.title + ' 共 ' + eps.length
+      + ' 集（集号 ' + first + '–' + last + '）。视频将保存到服务端 download 目录下'
+      + ctx.title + ' 文件夹，文件名为「第N集.mp4」；每集最多重试 3 次。';
+    $('dlGo').disabled = false;
+    $('dlGo').textContent = '开始下载';
+    dlModal.hidden = false;
+  }
+
+  /** 关闭范围选择卡片（不影响任何后台任务）。 */
+  function closeDlModal() {
+    dlModal.hidden = true;
+  }
+
+  /** 点「开始下载」：校验范围 -> 启动任务 -> 登记并提示去顶栏看进度。 */
+  function startDownload() {
+    const eps = ctx.episodes;
+    if (!eps.length) { toast('当前没有可下载的剧集'); return; }
+    const first = Number(eps[0].index) || 1;
+    const last = Number(eps[eps.length - 1].index) || eps.length;
+    const lo = parseInt($('dlStart').value, 10);
+    const hi = parseInt($('dlEnd').value, 10);
+    if (!Number.isInteger(lo) || !Number.isInteger(hi) || lo < first || hi > last || lo > hi) {
+      toast('请输入 ' + first + ' 到 ' + last + ' 之间的集号，且起始不大于结束');
+      return;
+    }
+    $('dlGo').disabled = true;
+    $('dlGo').textContent = '启动中…';
+    api('/download/task', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ series_id: ctx.seriesId, start: lo, end: hi }),
+    }).then((j) => {
+      const s = j.task;
+      dlTasks.unshift({
+        id: s.id, series_id: s.series_id, title: s.title,
+        total: s.total, done: s.done, failed: s.failed || [],
+        status: s.status, dir: s.dir, error: null,
+      });
+      syncDlEntryBtn();
+      pollDlTasks();
+      closeDlModal();
+      // 播放器弹层会盖住顶栏，此时用户点不到右上角入口：
+      // 直接展开进度卡片给即时反馈，Toast 再告知常驻入口的位置。
+      openDlProg();
+      $('dlGo').disabled = false;
+      $('dlGo').textContent = '开始下载';
+      toast('下载任务已启动，点击右上角「⤓」按钮查看进度', 4000);
+    }).catch((e) => {
+      $('dlGo').disabled = false;
+      $('dlGo').textContent = '开始下载';
+      toast('启动下载失败：' + e.message);
+    });
+  }
+
+  /** 打开进度卡片：渲染当前任务表（无任务时显示空态），并确保轮询在跑。 */
+  function openDlProg() {
+    renderDlProg();
+    dlProgModal.hidden = false;
+    pollDlTasks();
+  }
+
+  function closeDlProg() {
+    dlProgModal.hidden = true;
+  }
+
+  /** 轮询全部进行中的任务；全部结束后停止轮询（角标与记录仍在）。 */
+  function pollDlTasks() {
+    stopDlPoll();
+    if (!dlTasks.some((t) => t.status === 'running')) return;
+    dlTimer = setInterval(async () => {
+      for (const t of dlTasks.filter((x) => x.status === 'running')) {
+        try {
+          const j = await api('/download/task?id=' + encodeURIComponent(t.id));
+          const s = j.task;
+          const wasRunning = t.status === 'running';
+          t.done = s.done;
+          t.total = s.total;
+          t.failed = s.failed || [];
+          t.status = s.status;
+          t.dir = s.dir;
+          if (wasRunning && s.status !== 'running') onDlTaskDone(t);
+        } catch (e) {
+          // 404 = 服务端重启后内存任务表已丢：本地标记失效，不无限重试
+          if (e.status === 404) {
+            t.status = 'gone';
+            t.error = '任务已不存在（服务端可能已重启）';
+            onDlTaskDone(t);
+          }
+        }
+      }
+      syncDlEntryBtn();
+      if (!dlProgModal.hidden) renderDlProg();
+      if (!dlTasks.some((t) => t.status === 'running')) stopDlPoll();
+    }, 1500);
+  }
+
+  /** 任务结束（含失效）：弹一个汇总 toast；进度卡片开着就顺手刷新。 */
+  function onDlTaskDone(t) {
+    if (t.status === 'gone') {
+      toast('下载任务已失效：' + t.title + '（服务端可能已重启）');
+    } else if (t.status === 'failed') {
+      toast('下载失败：' + t.title + ' 全部 ' + t.total + ' 集未成功，请查看服务端控制台');
+    } else {
+      toast('下载完成：' + t.title + ' 成功 ' + t.done + '/' + t.total + ' 集'
+        + (t.failed.length > 0 ? '，失败 ' + t.failed.length + ' 集' : ''));
+    }
+    if (!dlProgModal.hidden) renderDlProg();
+  }
+
+  /** 渲染进度卡片：每个任务一行（标题 + 状态 + 进度条 + 明细）。 */
+  function renderDlProg() {
+    const box = $('dlProgList');
+    box.textContent = '';
+    if (dlTasks.length === 0) {
+      const empty = document.createElement('p');
+      empty.className = 'muted';
+      empty.textContent = '暂无进行中的任务';
+      box.appendChild(empty);
+      return;
+    }
+    for (const t of dlTasks) {
+      const pct = t.total > 0 ? Math.round((t.done / t.total) * 100) : 0;
+      const row = document.createElement('div');
+      row.className = 'dl-task';
+
+      const head = document.createElement('div');
+      head.className = 'dl-task-head';
+      const title = document.createElement('span');
+      title.className = 'dl-task-title';
+      title.textContent = t.title;
+      const state = document.createElement('span');
+      state.className = 'dl-task-state';
+      state.textContent = t.status === 'running' ? '下载中'
+        : t.status === 'done' ? '已完成'
+        : t.status === 'failed' ? '已失败' : '已失效';
+      if (t.status === 'done') state.classList.add('ok');
+      if (t.status === 'failed' || t.status === 'gone') state.classList.add('err');
+      head.appendChild(title);
+      head.appendChild(state);
+
+      const bar = document.createElement('div');
+      bar.className = 'dl-bar';
+      const fill = document.createElement('div');
+      fill.className = 'dl-bar-fill';
+      fill.style.width = pct + '%';
+      bar.appendChild(fill);
+
+      const sub = document.createElement('p');
+      sub.className = 'dl-task-sub muted';
+      sub.textContent = t.status === 'gone'
+        ? (t.error || '任务已不存在')
+        : '已完成 ' + t.done + '/' + t.total + ' 集'
+          + (t.failed.length > 0 ? ' · 失败 ' + t.failed.length + ' 集' : '')
+          + (t.status === 'running' ? '' : ' · 保存目录 ' + t.dir
+            + (t.failed.length > 0
+              ? '（失败集号：' + t.failed.map((f) => f.index).join('、') + '）' : ''));
+
+      row.appendChild(head);
+      row.appendChild(bar);
+      row.appendChild(sub);
+      box.appendChild(row);
+    }
+  }
+
+  $('pDlBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openDlModal();
+  });
+  $('dlClose').addEventListener('click', closeDlModal);
+  $('dlCancel').addEventListener('click', closeDlModal);
+  $('dlGo').addEventListener('click', startDownload);
+  // 点遮罩空白处关闭（只认遮罩本身，与播放器弹层的处理保持一致）
+  dlModal.addEventListener('click', (e) => {
+    if (e.target === dlModal) closeDlModal();
+  });
+  $('dlBtn').addEventListener('click', openDlProg);
+  $('dlProgClose').addEventListener('click', closeDlProg);
+  $('dlProgDone').addEventListener('click', closeDlProg);
+  dlProgModal.addEventListener('click', (e) => {
+    if (e.target === dlProgModal) closeDlProg();
+  });
+  // 「清除已结束」：清掉非运行中的任务；清空后自动收起卡片
+  $('dlProgClear').addEventListener('click', () => {
+    for (let i = dlTasks.length - 1; i >= 0; i--) {
+      if (dlTasks[i].status !== 'running') dlTasks.splice(i, 1);
+    }
+    syncDlEntryBtn();
+    if (dlTasks.length === 0) closeDlProg();
+    else renderDlProg();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!dlModal.hidden) closeDlModal();
+    if (!dlProgModal.hidden) closeDlProg();
+  });
+
   /* ---------- 收藏按钮（播放器内） ---------- */
   /**
    * 同步播放器标题行里的收藏按钮：显示/隐藏 + 已收藏态。
@@ -1477,6 +1729,7 @@
     ctx.freshOpen = false;
     syncFavBtn();
     syncRelBtn();
+    syncDlBtn();
     updatePMeta(); // 无剧集 → 集数按钮隐藏
     // 重置解码检测，下次打开会重新判定（换设备/换源可能结论不同）
     codecChecked = false;

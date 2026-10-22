@@ -172,3 +172,6 @@ vite.config.ts.timestamp-*
 
 # pack.sh 下载的 Node 运行时缓存（约 250MB / 5 个平台），纯本地中间产物
 /.pack-cache/
+
+# 剧集下载产物（download/<剧名>/第N集.mp4），运行时生成
+/download/

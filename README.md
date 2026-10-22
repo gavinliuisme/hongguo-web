@@ -251,6 +251,33 @@ ffmpeg -version  # 可选
 > 三个变体。日后装上 ffmpeg，旧的 `.raw.mp4` 会在下次命中缓存时自动补做
 > 剥离，升级为 `.play.mp4`。
 
+### 剧集下载
+
+播放器底部「集数按钮」右边有一个**「下载」按钮**（单集播放时隐藏），点击弹出范围选择卡片：
+
+- 默认范围为**第一集到最后一集**，可手动改起始/结束集号（按上游真实集号，即选集按钮上显示的数字）；
+- 确认后由**服务端后台下载**：逐集走与播放同一套流水线（取直链 → 下载 → spade 解密 → 减壳），
+  成品保存到**项目根目录 `download/<剧名>/第N集.mp4`**（剧名非法字符已替换，目录可用
+  `HONGGUO_DOWNLOAD_DIR` 或 `runtime.download.dir` 更改）；
+- 每集最多尝试 **3 次**（含首次）。为避免批量下载时日志刷屏，**单集成功不打印日志**
+  （进度看网页上的进度条，或调 `GET /download/task`）；只有每集 3 次都失败时输出一行
+  WARN，任务结束时输出一行汇总（成功/失败集号、用时、目录），均在**服务端控制台**；
+- 前端每 1.5 秒轮询一次进度（已完成 x/y、失败集号）。发起任务后会自动弹出**下载进度卡片**；
+  之后可随时点击**主页右上角「⤓」按钮**（位于「收藏」与「切换主题」之间）重新打开，
+  按钮角标显示进行中的任务数，多个剧的任务在卡片里并列展示，关闭卡片不影响后台下载；
+  同一部剧同时只跑一个任务，重复发起会直接回到那个任务的进度；
+- 已播放过的集会命中解密缓存，复制即完成，不会重复下载。
+
+```bash
+# 等价 API：启动任务（后台执行，立即返回）
+curl -X POST -H "x-api-key: <key>" -H "Content-Type: application/json" \
+  -d '{"series_id":"7621200213801176126","start":1,"end":10}' \
+  http://127.0.0.1:8000/download/task
+
+# 查询进度
+curl -H "x-api-key: <key>" "http://127.0.0.1:8000/download/task?id=<task_id>"
+```
+
 ### 列表分页与「加载更多」
 
 「推荐 / 榜单 / 最新 / 筛选」与搜索的网格末尾会挂一张**「加载更多」卡片**，
@@ -305,6 +332,8 @@ curl -H "x-api-key: <你的 key>" "http://127.0.0.1:8000/rank?board=recommend"
 | GET | `/prewarm?vid=` | **预热下一集**（后台解密落盘，立即返回，供自动连播用） |
 | GET | `/img?u=<URL>` | 图片代理（含 HEIC 转换） |
 | GET | `/download?vid=&quality=` | 下载解密后的成品 |
+| POST | `/download/task` | **批量下载剧集**（body `{series_id,start,end}`，后台执行，返回任务快照） |
+| GET | `/download/task?id=` | 查询下载任务进度（`done`/`total`/`failed`/`status`） |
 | GET | `/stats` | 运行统计 |
 | GET/POST/DELETE | `/admin/keys`, `/admin/keys/revoke` | 密钥管理（需 `ADMIN_TOKEN`） |
 
@@ -367,6 +396,8 @@ curl -H "x-api-key: <key>" \
 | `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `config.json` 的 `upstream.session_headers.user-agent`） |
 | `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项迁移） | `runtime.data_dir` |
 | `HONGGUO_STREAM_CACHE` | `server/stream-cache` | 解密成品缓存 | 无，仅环境变量 |
+| `HONGGUO_DOWNLOAD_DIR` | `download` | 剧集下载目录（相对项目根目录），每剧一个子文件夹 | `runtime.download.dir` |
+| `HONGGUO_DOWNLOAD_CONCURRENCY` | `2` | 批量下载时的并发集数（1–8），调大可能拖慢播放 | `runtime.download.concurrency` |
 | `HONGGUO_CACHE_MAX_FILES` | `30` | 缓存文件数上限，超出后按最后修改时间删除最旧的；设为 `0` 表示不限 | `runtime.cache.max_files` |
 | `HONGGUO_SESSION_API_KEY` | 空 | 设置后进入「托管模式」，固定单设备、禁止刷新登录态 | 无，仅环境变量 |
 | `HG_TRANSCODE` | 空（不转码） | 设为 `1` 时把 HEVC 转成 H.264，仅在机器缺 HEVC 解码器时才需要 | `runtime.transcode` |
@@ -478,6 +509,7 @@ hongguo-web/
 │   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
 │   │   │   ├── app-source.js  App 取址链路（b 域名 v1 + fallback_api）
 │   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
+│   │   │   ├── download.js    剧集批量下载（任务管理 / 重试 / 落盘）
 │   │   │   ├── stream.js      下载 + 解密 + remux
 │   │   │   └── res.js         响应辅助（JSON/静态/Range）
 │   │   └── util/
@@ -489,6 +521,7 @@ hongguo-web/
 │   ├── config/config.json     启动配置（端口、监听、调优参数、上游接口参数 upstream 段）
 │   ├── config/apikeys.json    链路密钥、管理口令与 device_id（首次启动自动生成，不入库）
 │   └── stream-cache/          解密成品缓存（运行时生成，不入库）
+├── download/                  剧集下载目录（运行时生成，不入库）
 ├── node/                      Node 运行时（仅发行包内有；仓库不含）
 └── web/                       前端静态资源（可直接浏览器打开）
     ├── index.html
