@@ -829,18 +829,15 @@ function appSource() {
     AppSource.pyEncode('novelread-7.1.3_32~x') === 'novelread-7.1.3_32~x',
     AppSource.pyEncode('novelread-7.1.3_32~x'));
 
-  const d = AppSource.device();
+  const d = AppSource.DEVICE_BASE;
   check('设备身份: version_code=71332',
     String(d.version_code) === '71332', '');
   check('设备身份: channel=update_64',
     String(d.channel) === 'update_64', '');
   check('设备身份: device_type=25053RT47C',
     String(d.device_type) === '25053RT47C', '');
-  const id1 = String(d.device_id);
-  const id2 = String(d.iid);
-  check('设备身份: device_id 为 16 位数字', /^\d{16}$/.test(id1), id1);
-  check('设备身份: iid 为 16 位数字', /^\d{16}$/.test(id2), id2);
-  check('设备身份: iid 与 device_id 不同', id1 !== id2, '');
+  check('设备身份: 基础参数不含 iid/device_id（播放身份由匿名注册提供）',
+    d.iid === undefined && d.device_id === undefined, '');
 
   try {
     const u = AppSource.checkedUrl('https://p3.qznovelvod.com/a/b.mp4', AppSource.VOD_DOMAINS);

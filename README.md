@@ -22,13 +22,13 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.4` 为例） |
+| 你的系统 | 下载的文件（`1.1.5` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.4-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.4-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.4-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.4-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.4-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.5-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.5-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.5-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.5-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.5-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -39,7 +39,7 @@
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.4-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.1.5-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -49,7 +49,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.4-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.1.5-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -464,7 +464,7 @@ node server/src/main.js --selftest
 | 17 | 缓存上限与过期清扫 |
 | 18 | stream-cache 数量上限（超出按修改时间淘汰最旧；上限取 `runtime.cache.max_files`，可被 `HONGGUO_CACHE_MAX_FILES` 覆盖） |
 | 19 | 搜索分页切片（skip 生效且 has_more 判据正确） |
-| 20 | App 取址链路：合成设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
+| 20 | App 取址链路：设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
 | 21 | CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
 
 这些都是踩坑后固化的回归基线，用于判断「迁移是否等价」。
@@ -507,7 +507,8 @@ hongguo-web/
 │   │   │   └── safeguards.js  风控 + 缓存 + 节流
 │   │   ├── service/
 │   │   │   ├── web-source.js  官网数据源（搜索/分集列表）
-│   │   │   ├── app-source.js  App 取址链路（b 域名 v1 + fallback_api）
+│   │   │   ├── app-source.js  App 取址链路（注册身份 + 无签名 + fallback_api）
+│   │   │   ├── playback-device.js 匿名播放设备注册（ttEncrypt）
 │   │   │   ├── client.js      上游 API 客户端（签名 + 六请求头）
 │   │   │   ├── download.js    剧集批量下载（任务管理 / 重试 / 落盘）
 │   │   │   ├── stream.js      下载 + 解密 + remux
@@ -600,18 +601,25 @@ A：能。剥离 CENC 信令默认走**纯 JS 减壳**（删信令盒、修补�
 
 **Q：列表接口返回空 body？**
 
-A：这是上游的风控行为，与本地无关：`search` / `multi_video_detail` /
-App 取址（b 域名 `multi_video_model/v1`）三个接口上游要求带签名，
-若请求未带或签名不被接受，上游返回 HTTP 200 + 空 body。本项目对这三个
-接口固定走本地签名，正常不会触发；若偶发出现，稍后重试即可。
+A：这是上游的风控行为，与本地无关：`search` / `multi_video_detail`
+两个接口上游要求带签名，若请求未带或签名不被接受，上游返回 HTTP 200 + 空 body。
+本项目对这两个接口固定走本地签名，正常不会触发；若偶发出现，稍后重试即可。
+
+播放取址（b 域名 `multi_video_model/v1`）自 2026-10-27 起改为
+「匿名设备注册 + 无签名请求」：先由 `playback-device.js` 注册匿名设备，
+再用注册返回的 device_id/iid 取流（同进程复用，重启后重新注册）。
+该接口返回空 body 通常意味着设备身份被上游拒绝，与签名无关：
+先确认设备注册是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应），
+再重启进程触发重新注册。
 排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
-其余为 `preload/v1`），再查签名。
+其余为 `preload/v1`）。
 
 **Q：播放失败，日志提示「无直链 / video_model」？**
 
 A：个别分集（后集高发）上游已不再从 a 域名 `preload/v1` 返回 video_model，
-取直链已统一改走 App 取址链路（`AppSource`：b 域名 `multi_video_model/v1` +
-跟随 `fallback_api` 二次请求，媒体 URL 带 `key_seed` 时自动解密）。
+取直链已统一改走 App 取址链路（`AppSource`：b 域名 `multi_video_model/v1`；
+片源内联在 `video_model.video_list` 时直接使用，否则跟随 `fallback_api`
+二次请求；媒体 URL 带 `key_seed` 时自动解密）。
 若仍失败，将该分集编号与日志反馈给维护者；
 临时规避可换其他清晰度或稍后重试。
 
