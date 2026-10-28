@@ -93,6 +93,12 @@ async function episodes(seriesId) {
     const cover = normalizeVideoUrl(pickJsonString(html, 'series_cover'));
     const am = /"accessible_episode_cnt"\s*:\s*(\d+)/.exec(html);
     const accessible = am ? Math.min(parseInt(am[1], 10), vids.length) : null;
+    // 富信息：官网分集页内嵌的剧集 JSON 里其实有简介、标签与连载状态，
+    // 此前只取了标题/封面，回落时简介就成了空串（前端「简介」按钮消失）。
+    const intro = pickJsonText(html, 'series_intro');
+    const tags = pickJsonStringArray(html, 'tags');
+    const info = pickJsonObjectBlock(html, 'series_episode_info');
+    const status = info === '' ? null : pickJsonInt(info, 'series_status');
 
     const eps = [];
     for (let i = 0; i < vids.length; i++) {
@@ -110,6 +116,9 @@ async function episodes(seriesId) {
     out.series_id = sid;
     out.series_title = title;
     out.cover = cover;
+    out.series_intro = intro;
+    out.tags = tags;
+    out.series_status = status;
     out.total = eps.length;
     out.web_accessible_episodes = accessible === null ? -1 : accessible;
     out.episodes = eps;
@@ -146,6 +155,62 @@ function pickJsonString(text, key) {
   const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const m = new RegExp('"' + esc + '"\\s*:\\s*"([^"]*)"').exec(text);
   return m ? normalizeVideoUrl(m[1]) : '';
+}
+
+/**
+ * 取字符串字段的**原文**（不做 URL 归一化，保留标点与换行）。
+ * 供简介这类纯文本用 —— 走 normalizeVideoUrl 会把 `&amp;`、`Range=` 之类
+ * 误当 URL 片段处理。
+ *
+ * 逐字符扫描到未转义的闭引号，再交给 JSON.parse 还原 \" \u002F 等转义，
+ * 因此简介里出现英文引号也不会被截断。
+ */
+function pickJsonText(text, key) {
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('"' + esc + '"\\s*:\\s*"').exec(text);
+  if (!m) return '';
+  let i = m.index + m[0].length;
+  let raw = '';
+  while (i < text.length) {
+    const c = text[i];
+    if (c === '\\') { raw += c + (text[i + 1] === undefined ? '' : text[i + 1]); i += 2; continue; }
+    if (c === '"') break;
+    raw += c;
+    i++;
+  }
+  try { return String(JSON.parse('"' + raw + '"')); } catch (e) { return raw; }
+}
+
+/** 取字符串数组字段（如 "tags":["剧情","穿越"]）；缺失或非法返回空数组。 */
+function pickJsonStringArray(text, key) {
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('"' + esc + '"\\s*:\\s*\\[([^\\]]*)\\]').exec(text);
+  if (!m) return [];
+  const out = [];
+  const re = /"((?:[^"\\]|\\.)*)"/g;
+  let g = re.exec(m[1]);
+  while (g !== null) {
+    try { out.push(String(JSON.parse('"' + g[1] + '"'))); } catch (e) { out.push(g[1]); }
+    g = re.exec(m[1]);
+  }
+  return out;
+}
+
+/** 取一个内嵌对象的原文（如 "series_episode_info":{...}）；缺失返回 ''。 */
+function pickJsonObjectBlock(text, key) {
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('"' + esc + '"\\s*:\\s*\\{').exec(text);
+  if (!m) return '';
+  const open = m.index + m[0].length - 1;
+  const close = matchBracket(text, open, '{', '}');
+  return close > open ? text.slice(open, close + 1) : '';
+}
+
+/** 取整数字段（如 "series_status":1）；缺失返回 null。 */
+function pickJsonInt(text, key) {
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp('"' + esc + '"\\s*:\\s*(-?\\d+)').exec(text);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 /** 去掉 HTML/JSON 转义与 Range 参数，还原可直接下载的地址。 */
