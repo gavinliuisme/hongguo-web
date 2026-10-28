@@ -451,6 +451,38 @@ function episodeTitle() {
     Json.optStr(Json.optObj(r.meta).title, '') === '测试剧', '');
   check('按 index 升序排列',
     Json.optLong(a1.index, 0) === 1 && Json.optLong(a2.index, 0) === 2, '');
+
+  // 官网回落：分集页内嵌 JSON 里的简介/标签/连载状态必须透传，
+  // 否则一次风控空响应会让「简介」按钮整段消失。
+  const web = Json.obj();
+  web.series_id = '123';
+  web.series_title = '官网剧';
+  web.series_intro = intro;
+  web.tags = ['剧情', '穿越'];
+  web.series_status = 1;
+  web.total = 1;
+  web.cover = '';
+  const we = Json.obj();
+  we.vid = 'v9';
+  we.vid_index = 1;
+  we.title = '';
+  we.cover = '';
+  we.web_available = true;
+  web.episodes = [we];
+  const wd = Client.webEpisodesToDetail(web);
+  const wm = Json.optObj(wd.meta);
+  const wEps = Json.optArr(wd.episodes);
+  check('官网回落: 简介透传', Json.optStr(wm.abstract, '') === intro, '');
+  check('官网回落: tags 进 category',
+    Json.optArr(wm.category).length === 2 && Json.optStr(Json.optArr(wm.category)[1], '') === '穿越', '');
+  check('官网回落: series_status=1 => 完结',
+    Json.optStr(wm.status, '') === '完结', Json.optStr(wm.status, ''));
+  check('官网回落: 标记 degraded',
+    wm.degraded === true, '');
+  check('官网回落: 分集数与 meta 对上',
+    wEps.length === 1 && Json.optLong(wm.episode_cnt, 0) === 1, '');
+  check('官网回落: 缺简介时不报错且为空串',
+    Json.optStr(Json.optObj(Client.webEpisodesToDetail(Json.obj()).meta).abstract, 'x') === '', '');
 }
 
 /** 13. 解码兼容性：默认不转码（直出 HEVC）。 */

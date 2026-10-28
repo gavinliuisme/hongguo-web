@@ -22,13 +22,13 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.6` 为例） |
+| 你的系统 | 下载的文件（`1.1.7` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.6-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.6-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.6-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.6-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.6-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.7-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.7-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.7-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.7-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.7-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -39,7 +39,7 @@
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.6-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.1.7-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -49,7 +49,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.6-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.1.7-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -456,7 +456,7 @@ node server/src/main.js --selftest
 | 9 | 播放缓存路径（`.play.mp4` 变体命中判定） |
 | 10 | 设备身份 device_id（格式、注入 base_query、落盘、`iid` 保持 0） |
 | 11 | 本地纯代码签名：六个头齐全、时间戳一致、branchOf 取值与 branch==1 抖动规避 |
-| 12 | 剧集解析：title 清洗（上游 title 实为简介） |
+| 12 | 剧集解析：title 清洗（上游 title 实为简介）；官网回落的简介/标签/连载状态透传与 `degraded` 标记 |
 | 13 | 解码兼容性：默认不转码（直出 HEVC） |
 | 14 | 本地链路密钥管理；管理口令生成与 apikeys.json 持久化 |
 | 15 | moov 定位：尾部 moov 也能找到（流式解密前置） |
@@ -725,6 +725,13 @@ A：视频下方左侧有个「第 xx 集」按钮，点击后从按钮**上方*
 A：默认**隐藏**。剧集名右侧有个「简介」小按钮，鼠标移上去就在下方浮出简介段落；
 鼠标移开、按 `Esc` 或点别处即收起。点击按钮也能切换显示/隐藏，方便触屏或键盘操作。
 简介为空时按钮自动隐藏，不占位。
+
+> 数据来源：简介取自 App 详情接口（`multi_video_detail/preload/v1`）。
+> 该接口偶发返回 HTTP 200 + 空 `data`（风控软拦截，实测约 1/3 的请求，与签名无关、
+> 也不区分剧集），本项目会先重试 2 次（间隔 400ms）；仍为空则回落官网分集页，
+> 官网数据里的简介、标签、连载状态同样会透传（`meta.degraded = true`，
+> 缓存 10 分钟而不是 6 小时，便于尽快重试 App 链路）。
+> 因此简介一般不会整段消失；若某部剧确实没有简介（新剧未填），按钮会隐藏。
 
 **Q：为什么状态栏文案不会把弹层顶高？**
 

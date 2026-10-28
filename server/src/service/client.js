@@ -455,7 +455,13 @@ function webSearchItems(web) {
   return out;
 }
 
-/** 官网分集结果转为与 parseEpisodeDetail 相同的结构（官网无简介/演员等字段）。 */
+/**
+ * 官网分集结果转为与 parseEpisodeDetail 相同的结构。
+ *
+ * 官网没有演员表，但分集页内嵌 JSON 里有简介、标签与连载状态，这里透传；
+ * 其余数值字段（播放量、追剧数）官网不提供，保留 0。
+ * meta.degraded 标记来源为官网降级数据，调用方据此用短 TTL 缓存。
+ */
 function webEpisodesToDetail(web) {
   const sid = Json.optStr(web.series_id, '');
   const eps = [];
@@ -480,16 +486,23 @@ function webEpisodesToDetail(web) {
   meta.series_id = sid;
   const title = Json.optStr(web.series_title, '');
   meta.title = title === '' ? sid : title;
-  meta.abstract = '';
+  meta.abstract = Json.optStr(web.series_intro, '');
   meta.episode_cnt = Json.optLong(web.total, eps.length);
-  meta.status = '';
+  const st = web.series_status;
+  meta.status = (st === 1 || st === '1') ? '完结' : ((st === 0 || st === '0') ? '连载中' : '');
   meta.play_cnt = 0;
   meta.followed_cnt = 0;
   meta.create_time = 0;
   meta.cover = Json.optStr(web.cover, '');
-  meta.category = [];
+  const tags = [];
+  for (const tObj of Json.optArr(web.tags)) {
+    const t = Json.optStr(tObj, '');
+    if (t !== '') tags.push(t);
+  }
+  meta.category = tags;
   meta.tags = [];
   meta.celebrities = [];
+  meta.degraded = true;
   const out = Json.obj();
   out.meta = meta;
   out.episodes = eps;
@@ -761,6 +774,37 @@ async function searchPage(query, maxItemsArg, skip) {
   return Page.slice([], skipN, limit, false);
 }
 
+/**
+ * App 详情接口「空 data」时的额外重试次数与间隔。
+ *
+ * 上游 preload/v1 对约 1/3 的请求返回 HTTP 200 + 空 data（风控软拦截，
+ * 与签名无关、也不区分剧）。api() 的重试只处理抛异常的情况，空 data 走不到，
+ * 所以在这里补一层：宁可多等 0.8 秒，也别直接回落成「无简介」的官网数据。
+ */
+const APP_DETAIL_RETRIES = 2;
+const APP_DETAIL_RETRY_DELAY_MS = 400;
+
+/** 正常详情缓存 6 小时；官网降级数据只存 10 分钟，便于尽快重试 App 链路。 */
+const EPISODE_CACHE_TTL_SEC = 21600;
+const EPISODE_DEGRADED_TTL_SEC = 600;
+
+/** 取 App 详情；空 data 时重试，成功返回解析结果，全部落空才抛错。 */
+async function fetchAppEpisodes(sid) {
+  let last = null;
+  for (let attempt = 0; attempt <= APP_DETAIL_RETRIES; attempt++) {
+    if (attempt > 0) await Safeguards.sleep(APP_DETAIL_RETRY_DELAY_MS);
+    const j = await api('POST', '/novel/player/multi_video_detail/preload/v1',
+      episodesBody(sid), null, 3, true);
+    const data = Json.optObj(j.data);
+    const entry = data === null ? null : Json.optObj(data[sid]);
+    const vd = entry === null ? null : Json.optObj(entry.video_data);
+    const result = parseEpisodeDetail(sid, vd);
+    if (result.episodes.length > 0) return result;
+    last = new Error('App 未返回剧集列表（空 data，疑似风控）');
+  }
+  throw last;
+}
+
 /** 取单剧元信息 + 剧集列表（缓存 6 小时）。App 详情失败时回落官网分集页。 */
 async function getEpisodes(seriesId) {
   const sid = String(seriesId);
@@ -769,23 +813,12 @@ async function getEpisodes(seriesId) {
   if (cached !== null) return Json.optObj(cached);
 
   try {
-    const j = await api('POST', '/novel/player/multi_video_detail/preload/v1',
-      episodesBody(sid), null, 3, true);
-    const data = Json.optObj(j.data);
-    const entry = data === null ? null : Json.optObj(data[sid]);
-    const vd = entry === null ? null : Json.optObj(entry.video_data);
-    const result = parseEpisodeDetail(sid, vd);
-    // 上游风控时会返回 {"code":0,"data":[]} 之类的空壳 —— HTTP 200、
-    // 不抛错，若不识破就会把「空剧集」当正常结果交付（缓存 6 小时），
-    // 用户看到「该剧暂无剧集」。空结果一律视为失败，交官网兜底。
-    if (result.episodes.length === 0) {
-      throw new Error('App 未返回剧集列表（空 data，疑似风控）');
-    }
-    Safeguards.cacheSet(ck, result, 21600);
+    const result = await fetchAppEpisodes(sid);
+    Safeguards.cacheSet(ck, result, EPISODE_CACHE_TTL_SEC);
     return result;
   } catch (e) {
     // App 详情失败（风控 / 网络 / 签名被拒）时回落官网分集页：
-    // 官网只有 vid 列表，没有简介、演员等富信息，但保证分集可见。
+    // 官网只有分集列表，富信息（演员、播放量）缺失，但至少分集可见。
     // App 失败回落官网是常态（风控空响应等），此处不输出日志避免刷屏；
     // 仅当官网链路同样失败、确实无法获取剧集信息时，才在下方汇总输出一行
     // （合并 App 侧与官网侧两个原因，不再分别打印）。
@@ -798,7 +831,9 @@ async function getEpisodes(seriesId) {
     }
     if (web !== null && web !== undefined) {
       const result = webEpisodesToDetail(web);
-      Safeguards.cacheSet(ck, result, 21600);
+      // 降级数据只短存：给 App 链路一个尽快重试的机会，避免一次瞬时
+      // 空响应把「无简介」锁死 6 小时。
+      Safeguards.cacheSet(ck, result, EPISODE_DEGRADED_TTL_SEC);
       return result;
     }
     Log.warn('App 与官网分集链路均失败，无法获取剧集信息 (' + sid + ')：'
@@ -830,34 +865,48 @@ async function getEpisodesBatch(seriesIds, batchSizeArg) {
     }
   }
 
-  for (let i = 0; i < todo.length; i += bs) {
-    const batch = todo.slice(i, Math.min(i + bs, todo.length));
-    try {
-      const j = await api('POST', '/novel/player/multi_video_detail/preload/v1',
-        episodesBody(batch.join(',')), null, 3, true);
+  // 批量接口同样会被风控软拦截（HTTP 200 + 缺该 sid 的 video_data）。
+  // 空结果的 sid 进入下一轮重试，而不是直接记 failed —— 否则卡片列表里
+  // 这部剧的简介/标签会一直空着。
+  let pending = todo;
+  for (let round = 0; round <= APP_DETAIL_RETRIES && pending.length > 0; round++) {
+    if (round > 0) await Safeguards.sleep(APP_DETAIL_RETRY_DELAY_MS);
+    const next = [];
+    for (let i = 0; i < pending.length; i += bs) {
+      const batch = pending.slice(i, Math.min(i + bs, pending.length));
+      let j = null;
+      try {
+        j = await api('POST', '/novel/player/multi_video_detail/preload/v1',
+          episodesBody(batch.join(',')), null, 3, true);
+      } catch (e) {
+        for (const sid of batch) {
+          const f = Json.obj();
+          f.series_id = sid;
+          f.error = String(e && e.message !== undefined ? e.message : e);
+          failed.push(f);
+        }
+        continue;
+      }
       const data = Json.optObj(j.data);
       for (const sid of batch) {
         const entry = data === null ? null : Json.optObj(data[sid]);
         const vd = entry === null ? null : Json.optObj(entry.video_data);
         if (vd === null || Object.keys(vd).length === 0) {
-          const f = Json.obj();
-          f.series_id = sid;
-          f.error = 'empty detail';
-          failed.push(f);
+          next.push(sid);
           continue;
         }
         const parsed = parseEpisodeDetail(sid, vd);
-        Safeguards.cacheSet(Safeguards.cacheKey('episodes', sid), parsed, 21600);
+        Safeguards.cacheSet(Safeguards.cacheKey('episodes', sid), parsed, EPISODE_CACHE_TTL_SEC);
         out[sid] = parsed.meta;
       }
-    } catch (e) {
-      for (const sid of batch) {
-        const f = Json.obj();
-        f.series_id = sid;
-        f.error = String(e && e.message !== undefined ? e.message : e);
-        failed.push(f);
-      }
     }
+    pending = next;
+  }
+  for (const sid of pending) {
+    const f = Json.obj();
+    f.series_id = sid;
+    f.error = 'empty detail';
+    failed.push(f);
   }
   return [out, failed];
 }
@@ -1322,6 +1371,7 @@ module.exports = {
   coverTags,
   parseSearchCell,
   parseEpisodeDetail,
+  webEpisodesToDetail,
   search,
   searchPage,
   getEpisodes,
