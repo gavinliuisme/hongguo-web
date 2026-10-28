@@ -1248,7 +1248,12 @@
 
     epBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      if (epCard.hidden) openEpCard(); else epCard.hidden = true;
+      if (epCard.hidden) {
+        closeDlModal(); // 两张贴附卡片互斥，避免叠在按钮上方
+        openEpCard();
+      } else {
+        epCard.hidden = true;
+      }
     });
     $('pEpClose').addEventListener('click', (e) => { e.stopPropagation(); epCard.hidden = true; });
     // 点卡片外部关闭
@@ -1500,7 +1505,14 @@
 
   $('pDlBtn').addEventListener('click', (e) => {
     e.stopPropagation();
-    openDlModal();
+    // 与集数按钮一致：卡片开着时再点一次收起（stopPropagation 挡掉了
+    // document 的外部关闭监听，这里必须自己处理 toggle）
+    if (dlModal.hidden) {
+      closeEpCard(); // 两张贴附卡片互斥，避免叠在按钮上方
+      openDlModal();
+    } else {
+      closeDlModal();
+    }
   });
   $('dlClose').addEventListener('click', closeDlModal);
   $('dlCancel').addEventListener('click', closeDlModal);
@@ -1769,7 +1781,13 @@
   playerEl.addEventListener('click', (e) => {
     // 遮罩（.modal 背景）上的点击不再关闭播放器，吞掉冒泡避免误触。
     // 仅当点击落在遮罩本身（而非 .modal-card 内部）时拦截。
-    if (e.target === playerEl) e.stopPropagation();
+    if (e.target === playerEl) {
+      // 但贴附卡片要按「点外部关闭」处理：这里的 stopPropagation 会让
+      // document 上的关闭监听收不到，所以先显式收起再吞冒泡。
+      closeEpCard();
+      closeDlModal();
+      e.stopPropagation();
+    }
   });
 
   // ---------- 搜索 ----------
