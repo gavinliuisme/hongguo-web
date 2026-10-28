@@ -22,13 +22,13 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.5` 为例） |
+| 你的系统 | 下载的文件（`1.1.6` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.5-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.5-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.5-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.5-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.5-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.6-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.6-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.6-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.6-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.6-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -39,7 +39,7 @@
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.5-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.1.6-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -49,7 +49,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.5-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.1.6-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -607,10 +607,14 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 
 播放取址（b 域名 `multi_video_model/v1`）自 2026-10-27 起改为
 「匿名设备注册 + 无签名请求」：先由 `playback-device.js` 注册匿名设备，
-再用注册返回的 device_id/iid 取流（同进程复用，重启后重新注册）。
+再用注册返回的 device_id/iid 取流（成功结果同进程复用；失败结果只缓存
+60 秒，之后自动重新注册，无需重启）。
 该接口返回空 body 通常意味着设备身份被上游拒绝，与签名无关：
-先确认设备注册是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应），
-再重启进程触发重新注册。
+先确认设备注册是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
+若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com` 的网络问题
+（DNS 解析、代理分流、防火墙），可用
+`curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
+看是否能通；预热重试时会自动清空注册缓存重发一次，仍失败则是环境问题。
 排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
 其余为 `preload/v1`）。
 

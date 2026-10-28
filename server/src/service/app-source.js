@@ -25,7 +25,7 @@
  */
 const crypto = require('crypto');
 const Spade = require('../core/spade');
-const { getPlaybackDevice } = require('./playback-device');
+const { getPlaybackDevice, resetPlaybackDevice } = require('./playback-device');
 const Crypto = require('../util/crypto');
 const Http = require('../util/http');
 const Json = require('../util/json');
@@ -514,6 +514,7 @@ function checkedUrl(value, domains) {
 
 module.exports = {
   fetch,
+  resetPlaybackDevice,
   DEVICE_BASE,
   pyEncode,
   pixelsOf,

@@ -14,7 +14,11 @@
  *   key/iv  = sha512(sha512(random) + KDF_SALT) 前 32 字节
  *
  * 身份只保留 device_id / iid / cdid，仅存进程内存；不保存设备令牌、
- * Cookie 或完整响应。注册结果（含失败）在进程内复用，避免预取/重试重复注册。
+ * Cookie 或完整响应。
+ *
+ * 缓存策略：成功结果进程内永久复用（身份不变）；失败结果只复用
+ * RETRY_COOLDOWN_MS，冷却期过后下次调用会重新注册 —— 否则开机时网络
+ * 未就绪这类瞬时故障会让整个进程永久不可播放，只能重启。
  */
 const crypto = require('crypto');
 const zlib = require('zlib');
@@ -29,11 +33,18 @@ const KDF_SALT = Buffer.from(
   '4dd4c2e6b83162090e52b3c7a6733ba41cb2462b829ab58a196b39db57177524'
   + 'f49baf7f08e8d68d26a72e37c1a95a2f1f05a51892aef2949732b62a38aadd58', 'hex');
 
-const REGISTER_UA = 'com.phoenix.read/72232 (Linux; U; Android 16; zh_CN; 25053RT47C; '
+/** 注册 UA 的版本号与 body 的 version_code（73932 / 7.3.9.32）保持一致。 */
+const REGISTER_UA = 'com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053RT47C; '
   + 'Build/BP2A.250605.031.A3)';
 
-/** 进程内注册结果（成功或失败都缓存）。 */
+/** 注册失败后的重试冷却（毫秒）：冷却期内复用失败结果，避免每个请求都去打上游。 */
+const RETRY_COOLDOWN_MS = 60000;
+
+/** 当前注册结果（Promise）。成功后永久复用；失败仅在冷却期内复用。 */
 let registration = null;
+
+/** 当前缓存的失败时间戳（毫秒）；0 表示缓存的是成功结果。 */
+let failedAt = 0;
 
 /** 取 *_str 优先、数字兜底，仅接受正整数形式的 ID。 */
 function responseId(response, name) {
@@ -81,52 +92,73 @@ function buildBody(now, cdid) {
 
 /**
  * 注册匿名播放设备；成功后返回 Object.freeze({device_id, iid, cdid})。
- * 同进程内共享一次注册（含失败的 Promise），避免重复注册。
+ *
+ * 成功结果进程内永久复用；失败结果只在 RETRY_COOLDOWN_MS 内复用，
+ * 冷却结束后自动重新注册（无需重启应用）。
  */
 function getPlaybackDevice() {
-  if (registration === null) {
-    registration = (async () => {
-      try {
-        const now = Date.now();
-        const cdid = crypto.randomUUID();
-        const body = buildBody(now, cdid);
-        const res = await Http.send({
-          url: REGISTER_URL,
-          method: 'POST',
-          timeoutMs: 8000,
-          followRedirect: false,
-          headers: {
-            'User-Agent': REGISTER_UA,
-            Accept: 'application/json',
-            'Content-Type': 'application/octet-stream;tt-data=a',
-            'log-encode-type': 'gzip',
-            'x-ss-dp': '8662',
-            'x-ss-req-ticket': String(now),
-            'x-vc-bdturing-sdk-version': '4.0.3.cn',
-            lc: '101',
-            'sdk-version': '2',
-            'passport-sdk-version': '5051452',
-            'x-neptune': '-8|50:51:59:30:40:47:49:39',
-            'x-ss-stub': crypto.createHash('md5').update(body).digest('hex').toUpperCase(),
-          },
-          body,
-        });
-        if (res.status !== 200) throw new Error('HTTP ' + res.status);
-        let j = null;
-        try { j = JSON.parse(res.text()); } catch (e) { j = null; }
-        const deviceId = j === null ? '' : responseId(j, 'device_id');
-        const iid = j === null ? '' : responseId(j, 'install_id');
-        const code = Number((j === null ? 0 : (j.code !== undefined ? j.code : j.Code)) || 0);
-        if (deviceId === '' || iid === '' || code !== 0) throw new Error('无效的注册响应');
-        return Object.freeze({ device_id: deviceId, iid, cdid });
-      } catch (e) {
-        throw Object.assign(new Error('匿名播放设备注册失败，请重启应用后重试'), {
-          code: 'DEVICE_REGISTRATION_FAILED', cause: e,
-        });
-      }
-    })();
+  if (registration !== null) {
+    if (failedAt === 0) return registration;
+    if (Date.now() - failedAt < RETRY_COOLDOWN_MS) return registration;
+    // 冷却结束：丢弃失败缓存，重新注册
+    registration = null;
+    failedAt = 0;
   }
-  return registration;
+  const pending = (async () => {
+    try {
+      const now = Date.now();
+      const cdid = crypto.randomUUID();
+      const body = buildBody(now, cdid);
+      const res = await Http.send({
+        url: REGISTER_URL,
+        method: 'POST',
+        timeoutMs: 8000,
+        followRedirect: false,
+        headers: {
+          'User-Agent': REGISTER_UA,
+          Accept: 'application/json',
+          'Content-Type': 'application/octet-stream;tt-data=a',
+          'log-encode-type': 'gzip',
+          'x-ss-dp': '8662',
+          'x-ss-req-ticket': String(now),
+          'x-vc-bdturing-sdk-version': '4.0.3.cn',
+          lc: '101',
+          'sdk-version': '2',
+          'passport-sdk-version': '5051452',
+          'x-neptune': '-8|50:51:59:30:40:47:49:39',
+          'x-ss-stub': crypto.createHash('md5').update(body).digest('hex').toUpperCase(),
+        },
+        body,
+      });
+      if (res.status !== 200) throw new Error('HTTP ' + res.status);
+      let j = null;
+      try { j = JSON.parse(res.text()); } catch (e) { j = null; }
+      const deviceId = j === null ? '' : responseId(j, 'device_id');
+      const iid = j === null ? '' : responseId(j, 'install_id');
+      const code = Number((j === null ? 0 : (j.code !== undefined ? j.code : j.Code)) || 0);
+      if (deviceId === '' || iid === '' || code !== 0) throw new Error('无效的注册响应');
+      return Object.freeze({ device_id: deviceId, iid, cdid });
+    } catch (e) {
+      throw Object.assign(new Error('匿名播放设备注册失败，请稍后重试'), {
+        code: 'DEVICE_REGISTRATION_FAILED', cause: e,
+      });
+    }
+  })();
+  // 记录失败时刻（只标记「当前」这次，避免被 reset 后的新注册覆盖）
+  pending.catch(() => {
+    if (registration === pending) failedAt = Date.now();
+  });
+  registration = pending;
+  return pending;
 }
 
-module.exports = { getPlaybackDevice };
+/**
+ * 清空注册缓存。预热重试等场景显式调用，让下一次 getPlaybackDevice()
+ * 真正重新发起注册（否则重试打的是同一个失败结果）。
+ */
+function resetPlaybackDevice() {
+  registration = null;
+  failedAt = 0;
+}
+
+module.exports = { getPlaybackDevice, resetPlaybackDevice };

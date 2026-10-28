@@ -455,6 +455,10 @@ async function prewarmOnce(vid, quality) {
   let last = null;
   for (let attempt = 0; attempt <= PREWARM_MAX_RETRIES; attempt++) {
     if (attempt > 0) {
+      // 设备注册失败会被缓存，重试前显式清空，否则三次尝试打的是同一个失败结果
+      if (last !== null && last.code === 'DEVICE_REGISTRATION_FAILED') {
+        AppSource.resetPlaybackDevice();
+      }
       // 重试前稍作等待，给瞬时故障一个恢复窗口
       await Safeguards.sleep(PREWARM_RETRY_DELAY_MS);
     }
