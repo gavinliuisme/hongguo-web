@@ -22,13 +22,13 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.7` 为例） |
+| 你的系统 | 下载的文件（`1.1.8` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.7-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.7-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.7-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.7-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.7-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.8-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.8-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.8-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.8-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.8-macOS-arm.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -39,7 +39,7 @@
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.7-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.1.8-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -49,7 +49,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.7-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.1.8-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -394,7 +394,7 @@ curl -H "x-api-key: <key>" \
 | `DEVICE_POOL_SIZE` | `0` | 设备身份池大小，0 为关闭 | 无，仅环境变量 |
 | `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `config.json` 的 `upstream.api_host`） |
 | `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `config.json` 的 `upstream.session_headers.user-agent`） |
-| `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项迁移） | `runtime.data_dir` |
+| `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项变化） | `runtime.data_dir` |
 | `HONGGUO_STREAM_CACHE` | `server/stream-cache` | 解密成品缓存 | 无，仅环境变量 |
 | `HONGGUO_DOWNLOAD_DIR` | `download` | 剧集下载目录（相对项目根目录），每剧一个子文件夹 | `runtime.download.dir` |
 | `HONGGUO_DOWNLOAD_CONCURRENCY` | `2` | 批量下载时的并发集数（1–8），调大可能拖慢播放 | `runtime.download.concurrency` |
@@ -405,7 +405,6 @@ curl -H "x-api-key: <key>" \
 | `HG_H264_ENCODER` | 空（自动探测） | 强制指定 H.264 编码器，如 `libx264` / `libopenh264` | 无，仅环境变量 |
 | `HG_SIGN_LIST` | 见代码 | 免签接口列表（一般不需改） | 无，仅环境变量 |
 | `HG_OPEN_BROWSER` | 空（跟随配置） | 设为 `0` 时服务就绪后不自动打开浏览器 | `launcher.open_browser` |
-| `HG_LOG_ENCODING` | 空（跟随控制台） | 强制日志编码，如 `UTF-8` | 无，仅环境变量 |
 | `WEB_DIR` | `<项目根>/web` | 前端目录 | 无，仅环境变量 |
 
 > 「配置文件」列给出该环境变量在 `server/config/config.json` 里对应的键名，
@@ -441,7 +440,7 @@ start.bat > run.log 2>&1
 node server/src/main.js --selftest
 ```
 
-覆盖 21 组共 **165 项**断言：
+覆盖 21 组共 **169 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -467,15 +466,16 @@ node server/src/main.js --selftest
 | 20 | App 取址链路：设备身份字段、python 风格 query 编码（`*!'()` 转 %XX）、媒体 URL 白名单 |
 | 21 | CENC 信令纯 JS 减壳（sinf/senc 移除、stco 平移且指向新 mdat、条目类型按 frma/hvcC 改回 hvc1、mdat 逐字节一致、盒链完整、尾部 moov/垃圾输入拒绝、co64 与无 frma 变体） |
 
-这些都是踩坑后固化的回归基线，用于判断「迁移是否等价」。
+这些都是踩坑后固化的回归基线，用于判断算法实现是否被改坏。
 预期结尾输出：
 
 ```
-  结果：165/165 全部通过
+  结果：169/169 全部通过
 ```
 
-> 早期文档曾写作 162 项，是把第 21 组的部分判据漏计所致；实际执行始终是
-> 165 项，本仓库的 Node 自检与迁移前的 Java 自检逐条一致。
+> 早期文档曾写作 162 / 165 项，是断言项数随迭代增长后未同步更新所致；
+> 以 `--selftest` 实际输出的「通过/总数」为准（若本机未安装 ffmpeg，
+> 会有一项 `✗ ffmpeg 可用` 失败，属环境原因，不影响算法结论）。
 
 自检不访问网络、不依赖任何外部服务，可在离线环境运行。
 
@@ -650,9 +650,6 @@ A：Node 始终以 UTF-8 输出，现代终端（Windows Terminal、PowerShell�
 Linux/macOS 终端）默认按 UTF-8 解码，正常情况下不该出现。若旧版
 `cmd.exe` 仍按 GBK(936) 解码，换个终端或执行 `chcp 65001` 即可；
 启动脚本本身不含任何 `chcp`，也不给 Node 传任何编码参数。
-
-若确实需要指定编码（例如把输出重定向进文件再交给别的工具分析），
-用环境变量：`HG_LOG_ENCODING=UTF-8`（不设则跟随控制台）。
 
 **Q：启动后浏览器没有自动打开？**
 

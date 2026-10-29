@@ -2,12 +2,11 @@
 /**
  * 红果短剧 Web 服务。
  *
- * 移植自 server/src/server.js（Node.js 版），语义以 Java
- * com.hongguo.api.Server 为权威规格，改用 Node 内置 http 模块，零第三方依赖。
+ * 基于 Node 内置 http 模块实现，零第三方依赖。
  *
- * 路由与原版保持一致：/ /health /api-key /search /rank /latest /filters
- *                  /browse /episodes /play /stream /video_url /img
- *                  /download /prewarm /stats /metrics/batch /admin/keys
+ * 路由：/ /health /api-key /search /rank /latest /filters
+ *       /browse /episodes /play /stream /video_url /img
+ *       /download /prewarm /stats /metrics/batch /admin/keys
  */
 
 const http = require('http');
@@ -24,6 +23,7 @@ const Http = require('./util/http');
 const Json = require('./util/json');
 const Config = require('./util/config');
 const Log = require('./util/log');
+const { LruCache } = require('./util/common');
 
 /** 免鉴权路径。 */
 const EXEMPT = new Set(['/', '/ui', '/img', '/favicon.ico', '/health', '/api-key']);
@@ -43,42 +43,25 @@ const IMG_HOSTS = ['fqnovelpic.com', 'byteimg.com', 'qznovelvod.com', 'douyinpic
  * 历史问题：只按「条数 < 1000」判断能否写入，却从不淘汰，且完全不考虑单张
  * 图片的字节大小（HEIC 封面可达数百 KB）。现在改为 LRU + 字节上限。
  */
-const imgCache = new Map(); // url -> Buffer（Map 头部为最旧）
-
-/** 图片缓存当前字节数。 */
-let imgCacheBytes = 0;
-
 /** 图片缓存字节上限：HG_IMG_CACHE_MAX_MB，默认 64MB。 */
 const IMG_CACHE_MAX_BYTES = Config.num('runtime.cache.img_max_mb', 64) * 1024 * 1024;
 
 /** 单张图片上限：HG_IMG_MAX_KB，默认 4MB，超限不缓存。 */
 const IMG_MAX_BYTES = Config.num('runtime.cache.img_max_kb', 4096) * 1024;
 
+/** 图片缓存：无 TTL，仅受字节上限约束（实现见 util/common.LruCache）。 */
+const imgCache = new LruCache({
+  maxBytes: IMG_CACHE_MAX_BYTES,
+  maxItemBytes: IMG_MAX_BYTES,
+  weigh: (b) => b.length,
+});
+
 function imgCacheGet(url) {
-  const hit = imgCache.get(url);
-  if (hit === undefined) return null;
-  // 访问序 LRU：命中后移到队尾
-  imgCache.delete(url);
-  imgCache.set(url, hit);
-  return hit;
+  return imgCache.get(url);
 }
 
 function imgCachePut(url, data) {
-  if (data.length > IMG_MAX_BYTES) return; // 过大不入缓存
-  const old = imgCache.get(url);
-  if (old !== undefined) {
-    imgCache.delete(url);
-    imgCacheBytes -= old.length;
-  }
-  imgCache.set(url, data);
-  imgCacheBytes += data.length;
-  // 超过上限时按 LRU 裁剪
-  while (imgCacheBytes > IMG_CACHE_MAX_BYTES && imgCache.size > 0) {
-    const firstKey = imgCache.keys().next().value;
-    const v = imgCache.get(firstKey);
-    imgCache.delete(firstKey);
-    imgCacheBytes -= v.length;
-  }
+  imgCache.setForever(url, data);
 }
 
 class Server {
@@ -148,8 +131,8 @@ class Server {
   /**
    * 签名后端状态（/health 与 /stats 用）。
    *
-   * 保持原「数组 + ready 字段」的形状：早期版本这里列的是外部 unidbg
-   * 签名服务地址，现已改为进程内 PureSign 纯代码计算，恒就绪。
+   * 保持「数组 + ready 字段」的形状：签名恒由进程内 PureSign 纯代码计算，
+   * 因此只有一个恒就绪的条目。
    */
   static signBackends() {
     const m = Json.obj();
@@ -904,7 +887,7 @@ function readJson(req) {
         return;
       }
       try {
-        resolve(Json.parseObject(body.toString('utf8')));
+        resolve(Json.parseObject(body.toString()));
       } catch (e) {
         reject(e);
       }

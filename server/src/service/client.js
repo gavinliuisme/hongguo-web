@@ -2,18 +2,18 @@
 /**
  * 红果短剧 API 客户端。
  *
- * 移植自 server/src/client.js。保留原有语义：设备身份池、_rticket 时间戳、
- * x-ss-stub MD5、列表类接口免签、剧集详情缓存、风控/登录态退避重试。
+ * 核心语义：设备身份池、_rticket 时间戳、x-ss-stub MD5、列表类接口免签、
+ * 剧集详情缓存、风控/登录态退避重试。
  *
- * 与 Node 版的两处架构变化：
- *  - 签名不再走外部 unidbg 服务，而是本进程内 PureSign 纯代码计算
+ * 两处关键架构：
+ *  - 签名不走任何外部服务，而是本进程内 PureSign 纯代码计算
  *    （branch==1 时抖动 _rticket 规避，实测服务端返回 code=0）；
  *  - 搜索与分集详情均以 App 签名接口为主，官网数据源（WebSource）兜底：
  *    搜索 App 无结果或请求失败时回落官网搜索页，分集详情 App 失败时
  *    回落官网分集页。
  *
- * Node 适配：纯解析/组装函数保持同步；所有发网络请求的函数写成 async
- * （返回 Promise）；Java 阻塞式 sleep/throttle 改用 await。
+ * 同步 / 异步：纯解析/组装函数保持同步；所有发网络请求的函数写成 async
+ * （返回 Promise），串行等待改用 await。
  */
 const crypto = require('crypto');
 const Json = require('../util/json');
@@ -188,7 +188,7 @@ function buildUrl(pathname, extra, rticket) {
 
   const parts = [];
   for (const [k, v] of Object.entries(q)) {
-    parts.push(k + '=' + Http.urlencode(String(v)));
+    parts.push(k + '=' + encodeURIComponent(String(v)));
   }
   return 'https://' + HOST + pathname + '?' + parts.join('&');
 }
@@ -211,7 +211,7 @@ function buildHeaders(body) {
 
   let data = null;
   if (body !== null && body !== undefined) {
-    data = Buffer.from(Json.stringify(body), 'utf8');
+    data = Buffer.from(Json.stringify(body));
     headers['x-ss-stub'] = Crypto.md5HexUpper(data);
     headers['Content-Length'] = String(data.length);
   } else {
@@ -228,7 +228,7 @@ async function apiOnce(method, pathname, body, extraQuery, signed) {
   const data = built.data;
 
   if (signed) {
-    // 本地纯代码签名（PureSign，移植自 jackotom/hongguo-drama）。
+    // 本地纯代码签名（PureSign，算法源自 jackotom/hongguo-drama）。
     // 注意 branch==1 的签名变体服务端不认（实测 110001），
     // 需抖动 _rticket 换一个 query 重签，最多 32 次。
     const khronos = Math.floor(Date.now() / 1000);
@@ -262,7 +262,7 @@ async function apiOnce(method, pathname, body, extraQuery, signed) {
     const err = new Safeguards.UpstreamResponseError('上游未返回 JSON');
     const diag = Json.obj();
     diag.http_status = res.status;
-    diag.body_bytes = Buffer.byteLength(text, 'utf8');
+    diag.body_bytes = Buffer.byteLength(text);
     err.diagnostic = diag;
     throw err;
   }
@@ -310,7 +310,7 @@ let lastRefresh = 0;
  *
  * 本地纯代码签名模式下本方法为空操作：设备身份由 Device.ensureDeviceId
  * 本机生成并持久化，token 来自 config.json 的 upstream.session_headers，
- * 不存在需要从外部签名服务抓取的状态。保留方法签名是为了让 api() 的重试
+ * 不存在需要从外部服务抓取的状态。保留方法签名是为了让 api() 的重试
  * 流程无需为此分支。
  */
 function refreshSession() {
@@ -1043,7 +1043,7 @@ class Page {
    * 从「已抓到的累积结果」里切出 [skip, skip+limit) 这一页。
    *
    * 上游不支持直接跳到第 N 条，续页只能从头多抓再丢掉前面的，
-   * 所以切片集中放在这里，便于自检直接验证（search 需真实签名服务）。
+   * 所以切片集中放在这里，便于自检直接验证（search 需真实上游响应）。
    *
    * has_more 的判据是"这一页确实凑满了 limit 条、且上游还有后续"。
    * 攒不满即已到末尾，必须报 false —— 否则前端会一直显示「加载更多」，

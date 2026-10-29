@@ -55,7 +55,7 @@ const TASKS = new Map();
 const TASK_KEEP = 50;
 let taskSeq = 0;
 
-/** 取异常文案（对齐 Java e.getMessage()）。 */
+/** 取异常文案。 */
 function errMsg(e) {
   if (e === null || e === undefined) return 'null';
   return (e.message !== undefined && e.message !== null) ? String(e.message) : String(e);

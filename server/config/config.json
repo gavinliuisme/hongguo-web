@@ -47,7 +47,7 @@
     "transcode": false,
     "_transcode提示": "HEVC 转 H.264。默认关闭；目标机器支持 HEVC 时直出更快，画质无损",
     "data_dir": "",
-    "_data_dir提示": "留空使用默认 server（视频解密缓存落在 server/stream-cache）。设备身份与链路密钥均落在 server/config/apikeys.json，不随本项迁移",
+    "_data_dir提示": "留空使用默认 server（视频解密缓存落在 server/stream-cache）。设备身份与链路密钥均落在 server/config/apikeys.json，不随本项变化",
     "device_id": "",
     "_device_id提示": "留空自动生成。多实例同时跑时给每个实例设不同值，可避免设备身份互撞",
     "throttle_ms": 260,
