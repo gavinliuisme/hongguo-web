@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 本机稳定设备身份（对应原 Java core/Device.java）。
+ * 本机稳定设备身份。
  *
  * 背景（实测结论）：
  *   红果的 search/tab/v 接口会校验 query 里的 device_id。缺失时上游直接返回

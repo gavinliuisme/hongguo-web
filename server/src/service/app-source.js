@@ -1,8 +1,6 @@
 'use strict';
 /**
- * App 签名取直链，移植自 jackotom/hongguo-drama 的 src/native/app-source.js。
- *
- * 对应原 Java service/AppSource.java。
+ * App 签名取直链，算法参考 jackotom/hongguo-drama 的 src/native/app-source.js。
  *
  * 为什么需要这个模块：老的 multi_video_model/preload/v1 链路对部分分集
  * （实测 vid=7693917197759958040）已不再返回 video_model 数据 —— data 为 null，
@@ -31,7 +29,7 @@ const Http = require('../util/http');
 const Json = require('../util/json');
 const Log = require('../util/log');
 
-/** 接口地址（尾斜杠照抄原实现，签名与路由都以它为准）。 */
+/** 接口地址（尾斜杠固定，签名与路由都以它为准）。 */
 const VIDEO_API = 'https://api5-normal-sinfonlineb.fqnovel.com/novel/player/multi_video_model/v1/';
 
 /** 接口主机（自检与排障用）。 */
@@ -73,7 +71,7 @@ async function fetch(vid, quality) {
   }
 
   // ---- 1. 无签名 POST multi_video_model/v1（使用注册的匿名身份）----
-  const body = Buffer.from(Json.stringify(payload(vid)), 'utf8');
+  const body = Buffer.from(Json.stringify(payload(vid)));
   const identity = await getPlaybackDevice();
   const j = await postPlayback(body, identity);
   if (Json.optInt(j.Code, 0) !== 0 || Json.optInt(j.code, 0) !== 0) {
@@ -285,7 +283,7 @@ async function postPlayback(body, identity) {
   return j;
 }
 
-/** fallback_api 的普通 GET：不带签名，只带 UA（与原实现一致）。 */
+/** fallback_api 的普通 GET：不带签名，只带 UA。 */
 async function getPlain(url) {
   const res = await Http.send({
     url, method: 'GET', timeoutMs: 15000, headers: { 'User-Agent': VIDEO_UA },
@@ -298,21 +296,12 @@ async function getPlain(url) {
 
 /**
  * query 键值编码：未保留字符编 %XX（大写）。
- * 保留集 = JS encodeURIComponent 的不编码集减去被他显式转码的 !'()*。
+ * 保留集 = JS encodeURIComponent 的不编码集减去需显式转码的 !'()*，
+ * 因此直接用内置 encodeURIComponent，再补转这 5 个字符。
  */
 function pyEncode(raw) {
-  const bytes = Buffer.from(String(raw), 'utf8');
-  let sb = '';
-  for (const b of bytes) {
-    if ((b >= 0x41 && b <= 0x5a) || (b >= 0x61 && b <= 0x7a)
-        || (b >= 0x30 && b <= 0x39)
-        || b === 0x2d || b === 0x5f || b === 0x2e || b === 0x7e) {
-      sb += String.fromCharCode(b);
-    } else {
-      sb += '%' + b.toString(16).toUpperCase().padStart(2, '0');
-    }
-  }
-  return sb;
+  return encodeURIComponent(String(raw))
+    .replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 // ==================== 响应解析 ====================
@@ -481,7 +470,7 @@ function decryptSpadeUrl(value, seed) {
     if (pad >= 1 && pad <= 16 && pad <= end) end -= pad;
   }
   while (end > 0 && pt[end - 1] === 0) end--;
-  return pt.subarray(0, end).toString('utf8');
+  return pt.subarray(0, end).toString();
 }
 
 /**

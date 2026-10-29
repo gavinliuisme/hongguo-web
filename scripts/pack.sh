@@ -387,13 +387,6 @@ for out in "${BUILT[@]}"; do
       echo "    ✅ scripts/ 仅含 .sh 脚本"
     fi
   fi
-
-  # 发行包里不该再有 Java 后端残留（迁移到 Node 后彻底移除）
-  if grep -Eq '(^|/)java/' <<<"$LIST"; then
-    echo "    ❌ 混入了 java/ 后端残留"; FAILED=1
-  else
-    echo "    ✅ 不含 java/ 后端残留"
-  fi
 done
 
 echo

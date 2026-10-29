@@ -2,15 +2,13 @@
 /**
  * 自检套件。
  *
- * 对应原 Java SelfTest.java —— 逐条保留其 21 组回归基线，用于判断
- * 「Java→Node 反向迁移是否等价」。全部用例不依赖网络与外部服务。
+ * 共 21 组算法与环境探测基线，全部用例不依赖网络与外部服务。
  *
- * 与 Java 的差异点（仅在运行态适配层）：
- *  - System.setProperty / getProperty  ->  process.env
- *  - RandomAccessFile                   ->  fs fd + Mp4.RafStore
- *  - 后台清扫线程 daemon 判定           ->  Safeguards.sweeperActive()
- *  - 末尾运行环境打印 Java 版本          ->  打印 Node 版本
- * 断言项数与判据与 Java 一一对应。
+ * 运行态适配层：
+ *  - 环境变量注入                   ->  process.env
+ *  - 随机文件读写                   ->  fs fd + Mp4.RafStore
+ *  - 后台清扫定时器存活判定         ->  Safeguards.sweeperActive()
+ *  - 末尾运行环境打印               ->  Node 版本
  */
 const fs = require('fs');
 const os = require('os');
@@ -76,8 +74,8 @@ function arrEq(a, b) {
   return true;
 }
 
-/** 按 Java List.toString() 的形态输出数组：`[a, b, c]`。 */
-function javaList(a) {
+/** 按 `[a, b, c]` 形态输出数组（便于断言失败时看清差异）。 */
+function listStr(a) {
   return '[' + a.join(', ') + ']';
 }
 
@@ -183,7 +181,7 @@ function ctrRoundTrip() {
     key[i] = i;
     ctr[i] = 0xF0 + i;
   }
-  const plain = Buffer.from('红果短剧 · hongguo ctr 往返测试', 'utf8');
+  const plain = Buffer.from('红果短剧 · hongguo ctr 往返测试');
   const enc = Crypto.aes128Ctr(key, ctr, plain);
   const dec = Crypto.aes128Ctr(key, ctr, enc);
   check('解密还原原文', bufEq(plain, dec));
@@ -203,7 +201,7 @@ function mp4Boxes() {
   check('逐样本 IV 已解析', t.ivs !== null && t.ivs.length === 2, '');
   check('IV 长度为 16 字节', t.ivSize === 16, '' + t.ivSize);
   // tenc 挂在 stsd→encv 内，而 encv 不在盒树的容器白名单里，
-  // 因此 default_KID 读不到（与 Java 版行为一致）。不影响解密。
+  // 因此 default_KID 读不到。不影响解密。
   check('KID 不参与解密链路（content key 来自 spade）', t.kid === null, '');
 
   const top = Mp4.parseBoxes(buf, 0, buf.length);
@@ -384,10 +382,10 @@ function pureSign() {
     + '?aid=8662&device_id=1234567890123456&version_code=71532'
     + '&version_name=7.1.5.32&device_type=SM-N9860';
   const url = base + '&_rticket=1700000000000';
-  const body = Buffer.from('{"biz_param":{},"mixed_video_id_map":{"1":["7686715217652223038"]}}', 'utf8');
+  const body = Buffer.from('{"biz_param":{},"mixed_video_id_map":{"1":["7686715217652223038"]}}');
 
   const h = PureSign.sign(url, body);
-  check('六个签名头齐全', Object.keys(h).length === 6, javaList(Object.keys(h)));
+  check('六个签名头齐全', Object.keys(h).length === 6, listStr(Object.keys(h)));
   for (const k of ['x-gorgon', 'x-khronos', 'x-ladon', 'x-argus', 'x-helios', 'x-medusa']) {
     check('含 ' + k, h[k] !== null && h[k] !== undefined && h[k] !== '', '');
   }
@@ -398,7 +396,7 @@ function pureSign() {
     String(khronos) === h2['x-khronos'], '' + h2['x-khronos']);
 
   const h3 = PureSign.sign(url, null);
-  check('无 body 也可签名', Object.keys(h3).length === 6, javaList(Object.keys(h3)));
+  check('无 body 也可签名', Object.keys(h3).length === 6, listStr(Object.keys(h3)));
 
   const branches = [0, 0, 0];
   let safe = 0;

@@ -1,6 +1,6 @@
 'use strict';
 /**
- * 启动配置装载：server/config/config.json（对应原 Java util/Config.java）。
+ * 启动配置装载：server/config/config.json。
  *
  * 取值优先级（高到低）：
  *   1. 环境变量（如 PORT=9000，CI 与临时覆盖用）
@@ -75,7 +75,7 @@ function load() {
       if (raw.length >= 3 && raw[0] === 0xEF && raw[1] === 0xBB && raw[2] === 0xBF) {
         raw = raw.subarray(3);
       }
-      const text = raw.toString('utf8');
+      const text = raw.toString();
       if (text.trim() === '') return null;
       const m = Json.parseObject(text);
       return (m === null || Object.keys(m).length === 0) ? null : m;

@@ -157,8 +157,7 @@ vite.config.ts.timestamp-*
 /server/config/apikeys.json
 
 # ---------- Node 后端 ----------
-# Node 后端是纯 JS 源码，直接 node 运行，没有编译产物需要忽略
-# （Java 时代的 java/build/ 与 java/dist/ 已随迁移移除）。
+# Node 后端是纯 JS 源码，直接 node 运行，没有编译产物需要忽略。
 
 # pack.sh 的打包产物（5 个平台的发行 zip，约 450MB）落在仓库根的 dist/。
 # 上文第 84 行的 `/dist` 已锚定根目录并覆盖此处，此处补充说明以防误删。
