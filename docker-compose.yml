@@ -57,11 +57,9 @@ services:
 
     # 三目录 bind mount：直接挂宿主机具体路径
     # 宿主机目录不存在时 Docker 会自动创建（属 root，entrypoint 会 chown）
-    # 改宿主机路径：把下面三行左侧的 /volume2/hongguo-web/ 改成你想要的目录
+    # 改宿主机路径：把下面左侧的 /volume2/hongguo-web/docker-data 改成你想要的目录
     volumes:
-      - /volume2/hongguo-web/config:/app/data/config
-      - /volume2/hongguo-web/stream-cache:/app/data/stream-cache
-      - /volume2/hongguo-web/download:/app/data/download
+      - /volume2/hongguo-web/docker-data:/app/data
 
     # 健康检查：HTTP 端口探活
     healthcheck:
