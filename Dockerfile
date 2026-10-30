@@ -44,10 +44,12 @@ ENV TZ=Asia/Shanghai \
     # 下载目录路径（覆盖默认的 download）
     HONGGUO_DOWNLOAD_DIR=/app/data/download
 
-# 显式装 libatomic1：Debian slim 不一定自带，确保即便将来换 Node 24/26
-# 也不会再撞原仓库 v1.1.7+ 那个 libatomic.so.1 缺失的坑
+# 显式装 libatomic1 + gosu：
+#   - libatomic1：Debian slim 不一定自带，确保即便将来换 Node 24/26
+#     也不会再撞原仓库 v1.1.7+ 那个 libatomic.so.1 缺失的坑
+#   - gosu：entrypoint 里以 root 修属主后降权到 node 用户
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libatomic1 ca-certificates && \
+    apt-get install -y --no-install-recommends libatomic1 ca-certificates gosu && \
     rm -rf /var/lib/apt/lists/*
 
 # 先复制 package.json（项目零依赖，但保留这一步以便将来加依赖时能利用层缓存）
@@ -60,21 +62,12 @@ COPY web ./web
 # 复制启动脚本（保留 start.sh / stop.sh 便于容器内排错；pack.sh 不需要）
 COPY scripts/start.sh scripts/stop.sh ./scripts/
 
-# 预创建数据目录，并交给 node 用户（UID 1000），避免挂载命名卷时权限拒绝
-# 注意：不 mkdir /app/server/config 和 /app/server/stream-cache ——
-#       源码里 server/config/ 已经带默认 config.json，那是模板，
-#       真正生效的 config 走 HONGGUO_CONFIG 指向 /app/data/config/
-RUN set -eux; \
-    mkdir -p \
-      /app/data/config \
-      /app/data/stream-cache \
-      /app/data/download; \
-    # 首次启动若 /app/data/config/config.json 不存在，从源码模板拷一份
-    if [ ! -f /app/data/config/config.json ]; then \
-      cp server/config/config.json /app/data/config/config.json; \
-    fi; \
-    chown -R node:node /app; \
-    chmod +x scripts/start.sh scripts/stop.sh
+# 复制 docker entrypoint 脚本：负责在卷挂载后创建数据子目录并初始化 config.json
+# 原因：VOLUME /app/data 会让宿主机卷覆盖镜像内 /app/data/ 下所有内容，
+#       构建时 mkdir 出来的子目录全会被清空。必须在容器启动后、Node 拉起前补回。
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh scripts/start.sh scripts/stop.sh && \
+    chown -R node:node /app
 
 # 健康检查：检查 HTTP 端口能响应（不依赖具体路由，404 也算进程活着）
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
@@ -86,8 +79,8 @@ EXPOSE 8000
 # 单卷挂载点：所有运行时数据（config / stream-cache / download）都在这里
 VOLUME ["/app/data"]
 
-# 切到非 root
-USER node
-
-# 直接拉起 main.js，不经过 start.sh（start.sh 是为了找自带 Node 而存在，容器里不需要）
+# 注意：故意不设 USER node —— entrypoint 需要 root 来 chown 卷目录，
+#       chown 完后再用 gosu 降权到 node。这样宿主机挂载点权限不对时也能自动修复。
+# ENTRYPOINT 接管启动，CMD 作为参数透传给 entrypoint
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server/src/main.js"]
