@@ -7,10 +7,15 @@
 #    docker compose down         停止并删除容器（保留卷）
 #    docker compose down -v      停止并删除卷（清空设备 ID 与缓存）
 #
-#  卷说明：
-#    hg-config       server/config/         含自动生成的 apikeys.json（设备 ID + 链路密钥）
-#    hg-stream-cache server/stream-cache/   视频解密缓存（可删，删了下次播放会重新解密）
-#    hg-download     download/              剧集下载目录
+#  卷说明（单卷设计）：
+#    只挂载 /app/data/ 一个目录，承载所有运行时数据：
+#
+#      data/config/         配置文件 + 自动生成的 apikeys.json（设备 ID + 链路密钥）
+#      data/stream-cache/   视频解密缓存（可删，删了下次播放会重新解密）
+#      data/download/       剧集下载目录（每部剧一个子文件夹）
+#
+#    首次启动会自动从镜像内拷贝默认 config.json 到 data/config/，无需手动准备。
+#    源码留在镜像内 /app/server/，不会被挂载覆盖。
 #
 #  端口：
 #    默认 8000:8000。要改外部端口，改左侧（如 8888:8000）即可。
@@ -32,8 +37,9 @@ services:
     ports:
       - "${HG_PORT:-8000}:8000"
 
-    # 环境变量：覆盖 server/config/config.json 默认值
+    # 环境变量：覆盖 server/config/config.json 的默认值
     # 优先级：环境变量 > config.json > 代码内置默认
+    # 数据路径已在 Dockerfile ENV 里默认指向 /app/data/，这里不必再设
     environment:
       # 监听所有网卡（容器必须）
       BIND_HOST: 0.0.0.0
@@ -41,8 +47,6 @@ services:
       PORT: 8000
       # 容器内无浏览器，关掉自动打开
       HG_OPEN_BROWSER: "false"
-      # 下载目录指向卷
-      HONGGUO_DOWNLOAD_DIR: /app/download
       # 时区
       TZ: Asia/Shanghai
       # ---- 以下为可选覆盖项，按需启用 ----
@@ -51,13 +55,12 @@ services:
       # HG_TRANSCODE: "false"                               # HEVC 转 H.264
       # HONGGUO_DOWNLOAD_CONCURRENCY: "2"                   # 下载并发数
 
-    # 命名卷：数据持久化，删容器不删数据
+    # 单卷挂载：宿主机一个目录覆盖容器内 /app/data/
+    # config / stream-cache / download 三个子目录都在这里
     volumes:
-      - hg-config:/app/server/config
-      - hg-stream-cache:/app/server/stream-cache
-      - hg-download:/app/download
+      - hg-data:/app/data
 
-    # 健康检查由 Dockerfile 自带，这里只在容器失活时限制重启频率
+    # 健康检查：HTTP 端口探活
     healthcheck:
       test: ["CMD", "node", "-e", "const http=require('http');const r=http.get({host:'127.0.0.1',port:8000,path:'/',timeout:3000},x=>{process.exit(x.statusCode<500?0:1)}).on('error',()=>process.exit(1)).on('timeout',()=>{r.destroy();process.exit(1)});"]
       interval: 30s
@@ -82,9 +85,5 @@ services:
         max-file: "3"
 
 volumes:
-  hg-config:
-    name: hg-config
-  hg-stream-cache:
-    name: hg-stream-cache
-  hg-download:
-    name: hg-download
+  hg-data:
+    name: hg-data
