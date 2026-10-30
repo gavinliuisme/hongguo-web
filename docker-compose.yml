@@ -26,7 +26,7 @@ services:
   hongguo-web:
     # 镜像名格式：ghcr.io/<GitHub用户名>/hongguo-web:<tag>
     # 默认拉 :latest，本地构建可改成 build: .
-    image: ghcr.io/${GHCR_USER:-your-github-username}/hongguo-web:latest
+    image: ghcr.io/gavinliuisme/hongguo-web:latest
     # 若没拉镜像而是本地构建，取消下行注释
     # build: .
 
