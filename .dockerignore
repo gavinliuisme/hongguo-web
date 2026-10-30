@@ -1,0 +1,49 @@
+# ================================================================
+#  .dockerignore —— 让 docker build 上下文最小化
+#
+#  原仓库自带的 node/ 目录（约 80MB）、.pack-cache/、dist/、screenshot/
+#  都不该进容器。.git/ 也不需要。
+# ================================================================
+
+# 版本控制
+.git
+.gitignore
+.gitattributes
+
+# 项目自带的 Node 运行时（容器用基础镜像里的 Node）
+node/
+node_modules/
+.pack-cache/
+
+# 构建产物
+dist/
+*.zip
+*.tar.gz
+
+# 截图与文档资源（不影响运行）
+screenshot/
+*.md
+LICENSE
+
+# IDE / 系统
+.DS_Store
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+
+# 日志
+*.log
+
+# 不需要的脚本（保留 start.sh / stop.sh）
+scripts/pack.sh
+scripts/start.bat
+scripts/stop.bat
+
+# 本 Docker 项目自身的辅助文件（避免进镜像）
+Dockerfile
+.dockerignore
+docker-compose.yml
+.github/
+DEPLOYMENT.md
+scripts/docker/
