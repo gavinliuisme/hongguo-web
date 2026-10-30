@@ -4,18 +4,18 @@
 #  适合个人/家用 NAS 一键部署：
 #    docker compose up -d        启动
 #    docker compose logs -f      看日志
-#    docker compose down         停止并删除容器（保留卷）
-#    docker compose down -v      停止并删除卷（清空设备 ID 与缓存）
+#    docker compose down         停止并删除容器（数据保留在宿主机目录里）
 #
-#  卷说明（单卷设计）：
-#    只挂载 /app/data/ 一个目录，承载所有运行时数据：
+#  卷说明（三目录 bind mount，直接挂宿主机路径）：
+#    宿主机路径                                   容器内路径                       说明
+#    /volume2/hongguo-web/config           /app/data/config           配置 + apikeys.json（设备 ID + 密钥）
+#    /volume2/hongguo-web/stream-cache     /app/data/stream-cache     视频解密缓存（可删，删了重新解密）
+#    /volume2/hongguo-web/download         /app/data/download         剧集下载目录
 #
-#      data/config/         配置文件 + 自动生成的 apikeys.json（设备 ID + 链路密钥）
-#      data/stream-cache/   视频解密缓存（可删，删了下次播放会重新解密）
-#      data/download/       剧集下载目录（每部剧一个子文件夹）
-#
-#    首次启动会自动从镜像内拷贝默认 config.json 到 data/config/，无需手动准备。
-#    源码留在镜像内 /app/server/，不会被挂载覆盖。
+#    首次启动 entrypoint 会自动：
+#      1. 在三个挂载点建子目录（如果不存在）
+#      2. 从镜像模板拷贝默认 config.json 到 config/（如果不存在）
+#      3. 修属主为 node 用户（UID 1000）
 #
 #  端口：
 #    默认 8000:8000。要改外部端口，改左侧（如 8888:8000）即可。
@@ -55,10 +55,13 @@ services:
       # HG_TRANSCODE: "false"                               # HEVC 转 H.264
       # HONGGUO_DOWNLOAD_CONCURRENCY: "2"                   # 下载并发数
 
-    # 单卷挂载：宿主机一个目录覆盖容器内 /app/data/
-    # config / stream-cache / download 三个子目录都在这里
+    # 三目录 bind mount：直接挂宿主机具体路径
+    # 宿主机目录不存在时 Docker 会自动创建（属 root，entrypoint 会 chown）
+    # 改宿主机路径：把下面三行左侧的 /volume2/hongguo-web/ 改成你想要的目录
     volumes:
-      - hg-data:/app/data
+      - /volume2/hongguo-web/config:/app/data/config
+      - /volume2/hongguo-web/stream-cache:/app/data/stream-cache
+      - /volume2/hongguo-web/download:/app/data/download
 
     # 健康检查：HTTP 端口探活
     healthcheck:
@@ -68,22 +71,9 @@ services:
       retries: 3
       start_period: 10s
 
-    # 资源限制：解密较吃 CPU，但通常 1G 内存够用；按 NAS 实情调整
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 1G
-        reservations:
-          memory: 256M
-
     # 日志滚动：避免长跑堆积
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
-volumes:
-  hg-data:
-    name: hg-data
