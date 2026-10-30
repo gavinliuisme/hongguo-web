@@ -1,0 +1,121 @@
+# ================================================================
+#  hongguo-web · Docker 镜像构建工作流
+#
+#  触发：
+#    1. push tag v*            —— 正式版，构建并推 GHCR，打 latest + 版本号 tag
+#    2. workflow_dispatch      —— 手动触发，可选 force_latest 强制刷新 latest
+#    3. push main              —— 仅构建测试（不推送），保证 PR 不破坏镜像
+#
+#  产物：ghcr.io/<owner>/hongguo-web:<tag>
+#        ghcr.io/<owner>/hongguo-web:latest  （仅 tag 触发或手动 force_latest）
+#
+#  多架构：linux/amd64 + linux/arm64
+#  权限：用 GITHUB_TOKEN 推 GHCR（packages:write），无需额外 PAT。
+# ================================================================
+
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      force_latest:
+        description: '强制刷新 :latest tag（即使不是 tag 触发）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build & Push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 解析镜像 tag
+        id: meta
+        run: |
+          set -eu
+          OWNER="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          IMAGE="ghcr.io/${OWNER}/hongguo-web"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+          # 默认 tag 列表：短 SHA（每次都打）
+          TAGS="${IMAGE}:sha-${GITHUB_SHA::7}"
+
+          IS_TAG="false"
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            IS_TAG="true"
+            VERSION="${GITHUB_REF#refs/tags/v}"
+            TAGS="${TAGS},${IMAGE}:${VERSION},${IMAGE}:latest"
+          fi
+
+          # 手动触发 + force_latest：补一个 latest
+          if [[ "${{ inputs.force_latest }}" == "true" && "$IS_TAG" != "true" ]]; then
+            TAGS="${TAGS},${IMAGE}:latest"
+          fi
+
+          # main 分支 push：打 main tag 便于追踪
+          if [[ "${GITHUB_REF}" == refs/heads/main && "$IS_TAG" != "true" ]]; then
+            TAGS="${TAGS},${IMAGE}:main"
+          fi
+
+          echo "tags=$TAGS" >> "$GITHUB_OUTPUT"
+          echo "is_tag=$IS_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_full=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "----"
+          echo "镜像：$IMAGE"
+          echo "Tags：$TAGS"
+          echo "Is tag release: $IS_TAG"
+
+      - name: 设置 QEMU（多架构模拟）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 设置 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR
+        # main 分支的 push 只构建不推；tag / 手动触发才推
+        if: steps.meta.outputs.is_tag == 'true' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          # 多架构
+          platforms: linux/amd64,linux/arm64
+          # tag / 手动触发推送；main 分支 push 只 load 不推
+          push: ${{ steps.meta.outputs.is_tag == 'true' || github.event_name == 'workflow_dispatch' }}
+          load: ${{ steps.meta.outputs.is_tag != 'true' && github.event_name != 'workflow_dispatch' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          # 缓存加速：CI 缓存走 GHA
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # 镜像标签元数据
+          provenance: true
+          sbom: false
+
+      - name: 输出镜像地址
+        if: steps.meta.outputs.is_tag == 'true' || github.event_name == 'workflow_dispatch'
+        run: |
+          echo "✅ 镜像已推送："
+          echo "   ${{ steps.meta.outputs.image_full }}"
+          echo ""
+          echo "拉取："
+          echo "   docker pull ${{ steps.meta.outputs.image_full }}:latest"
+          echo ""
+          echo "查看所有 tag："
+          echo "   https://github.com/${{ github.repository }}/pkgs/container/hongguo-web"
