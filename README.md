@@ -22,15 +22,15 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.9` 为例） |
+| 你的系统 | 下载的文件（`1.2.0` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.9-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.9-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.9-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.9-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.9-macOS-arm.zip` |
-| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.1.9-Linux-x64-node24.zip` |
-| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.1.9-Linux-arm-node24.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.0-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.0-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.0-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.0-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.0-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.0-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.0-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
@@ -65,7 +65,7 @@ bash: ./node/bin/node: cannot execute binary file
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.9-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.2.0-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -75,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.9-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.2.0-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -420,7 +420,6 @@ curl -H "x-api-key: <key>" \
 | `ADMIN_TOKEN` | 空 | `/admin/*` 与 `/stats` 的管理令牌。不设时首次启动自动生成 64 位口令并写入 `server/config/apikeys.json` 的 `admin_token`，重启沿用；环境变量优先 | `server/config/apikeys.json` 的 `admin_token` |
 | `RATE_PER_MIN` | `120` | 每分钟请求上限（限流） | 无，仅环境变量 |
 | `HG_THROTTLE_MS` | `260` | 上游请求串行节流间隔（毫秒） | `runtime.throttle_ms` |
-| `DEVICE_POOL_SIZE` | `0` | 设备身份池大小，0 为关闭 | 无，仅环境变量 |
 | `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `config.json` 的 `upstream.api_host`） |
 | `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `config.json` 的 `upstream.session_headers.user-agent`） |
 | `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项变化） | `runtime.data_dir` |
@@ -469,7 +468,7 @@ start.bat > run.log 2>&1
 node server/src/main.js --selftest
 ```
 
-覆盖 21 组共 **169 项**断言：
+覆盖 21 组共 **173 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -603,6 +602,10 @@ A：按顺序排查：
 3. 确认没有把 `HONGGUO_DEVICE_ID` 设成非法值。
 4. 多实例同时运行时，用 `HONGGUO_DEVICE_ID` 给每个实例指定不同且稳定的值。
 
+若上游明确返回 `device_id` 无效、受限或被拒绝，程序会为本地生成/存储的身份
+生成新值、写回 `apikeys.json` 并重试一次。通过环境变量或配置文件显式指定的身份
+不会自动覆盖；普通限流、验证码等风控响应也不会触发换号。
+
 > **为什么 `device_id` 是必需的**：搜索接口会比其它接口多校验一项设备标识。
 > 实测同一套请求参数，缺 `device_id` 时上游返回 53 字节的
 > `PARAM_INVALID`，补上后即 `code=0` + 完整结果（几十~上百 KB）。
@@ -611,7 +614,8 @@ A：按顺序排查：
 > 返回 HTTP 200 但 body 为空。修复方案因此只生成 `device_id`。
 
 `device_id` 相当于本机的设备指纹，**请勿随意删除或改动** `apikeys.json` 里的
-`device_id`：短时间内身份跳变会被上游判定为异常流量。
+`device_id`：短时间内身份跳变会被上游判定为异常流量。自动轮换仅在上游明确拒绝
+当前身份时发生。
 
 **Q：首播为什么慢？第二集为什么还要等一会儿？**
 

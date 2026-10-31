@@ -361,6 +361,38 @@ function device() {
   check('device_id 已写入 apikeys.json（单例）',
     KeyStore.store().deviceId() === id.deviceId,
     id.source);
+  let deviceRejected = false;
+  try { Safeguards.checkResponse({ code: 100103, message: '设备ID被风控' }); }
+  catch (e) {
+    deviceRejected = e instanceof Safeguards.RiskControlError
+      && e.safeResponse.device_id_rejected === true;
+  }
+  check('明确的 device_id 拒绝被识别', deviceRejected, '');
+  let genericRiskIsNotDeviceRejection = false;
+  try { Safeguards.checkResponse({ code: 110001, message: 'risk control' }); }
+  catch (e) {
+    genericRiskIsNotDeviceRejection = e instanceof Safeguards.RiskControlError
+      && e.safeResponse.device_id_rejected === false;
+  }
+  check('普通风控响应不触发 device_id 拒绝', genericRiskIsNotDeviceRejection, '');
+  const originalStore = KeyStore.store;
+  let fakeDeviceId = id.deviceId;
+  KeyStore.store = () => ({
+    deviceId: () => fakeDeviceId,
+    setDeviceId: (value) => { fakeDeviceId = String(value); },
+  });
+  const fakeQuery = { device_id: id.deviceId };
+  const fakeIdentity = { deviceId: id.deviceId, source: 'stored' };
+  let rotatedId = null;
+  try { rotatedId = Device.rotateDeviceId(fakeQuery, fakeIdentity, id.deviceId); }
+  finally { KeyStore.store = originalStore; }
+  check('拒绝后生成新 ID 并更新 query 与存储',
+    rotatedId !== null && rotatedId !== id.deviceId
+      && fakeQuery.device_id === rotatedId && fakeIdentity.deviceId === rotatedId
+      && fakeIdentity.source === 'rotated' && fakeDeviceId === rotatedId, '');
+  const explicitIdentity = { deviceId: id.deviceId, source: 'config' };
+  check('显式配置的 device_id 不自动覆盖',
+    Device.rotateDeviceId(fakeQuery, explicitIdentity, id.deviceId) === null, '');
   try {
     const ksFile = KeyStore.store().storeFile();
     const raw = fs.existsSync(ksFile) ? fs.readFileSync(ksFile, 'utf8') : '';
