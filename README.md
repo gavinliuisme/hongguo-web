@@ -667,12 +667,13 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 「匿名设备注册 + 无签名请求」：先由 `playback-device.js` 注册匿名设备，
 再用注册返回的 device_id/iid 取流（成功结果同进程复用；失败结果只缓存
 60 秒，之后自动重新注册，无需重启）。
-该接口返回空 body 通常意味着设备身份被上游拒绝，与签名无关：
-先确认设备注册是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
+该接口返回空 body 通常意味着匿名设备身份被上游拒绝或 IP 风控，与签名无关；
+预热重试时会失效本次身份并重新注册，最多重试 2 次。若仍失败，先确认设备注册
+是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
 若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com` 的网络问题
 （DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
-看是否能通；预热重试时会自动清空注册缓存重发一次，仍失败则是环境问题。
+看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
 排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
 其余为 `preload/v1`）。
 

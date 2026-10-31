@@ -275,10 +275,16 @@ async function postPlayback(body, identity) {
   const j = Json.parseObject(text);
   if (j === null || Json.optObj(j.data) === null) {
     // 空响应：设备身份被拒 / IP 风控 / 接口变更。调试时打出原始响应。
-    const hint = text.trim() === '' ? '（空响应，疑似设备身份被拒）' : '';
-    throw new Error('App 接口未返回 data' + hint
+    const emptyBody = text.trim() === '';
+    const hint = emptyBody ? '（空响应，疑似设备身份被拒）' : '';
+    const error = new Error('App 接口未返回 data' + hint
       + (Log.env('HG_APPSOURCE_DEBUG', null) !== null
         ? '（原始响应: ' + text + '）' : ''));
+    if (emptyBody) {
+      error.code = 'PLAYBACK_EMPTY_RESPONSE';
+      error.deviceId = identity.device_id;
+    }
+    throw error;
   }
   return j;
 }

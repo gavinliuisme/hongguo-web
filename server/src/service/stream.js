@@ -420,9 +420,14 @@ async function prewarmOnce(vid, quality) {
   let last = null;
   for (let attempt = 0; attempt <= PREWARM_MAX_RETRIES; attempt++) {
     if (attempt > 0) {
-      // 设备注册失败会被缓存，重试前显式清空，否则三次尝试打的是同一个失败结果
-      if (last !== null && last.code === 'DEVICE_REGISTRATION_FAILED') {
-        AppSource.resetPlaybackDevice();
+      // 注册失败或播放接口空响应都需要重新注册；空响应只清理对应 ID，
+      // 避免并发请求误清除另一请求刚注册成功的新身份。
+      if (last !== null && (last.code === 'DEVICE_REGISTRATION_FAILED'
+          || last.code === 'PLAYBACK_EMPTY_RESPONSE')) {
+        await AppSource.resetPlaybackDevice(last.deviceId);
+        if (last.code === 'PLAYBACK_EMPTY_RESPONSE') {
+          Log.warn('播放接口返回空响应，重新注册匿名播放设备后重试');
+        }
       }
       // 重试前稍作等待，给瞬时故障一个恢复窗口
       await Safeguards.sleep(PREWARM_RETRY_DELAY_MS);
