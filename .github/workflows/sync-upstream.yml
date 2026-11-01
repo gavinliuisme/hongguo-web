@@ -63,7 +63,11 @@ jobs:
       - name: 添加上游 remote
         run: |
           git remote add upstream https://github.com/sunnysky123/hongguo-web.git
-          git fetch upstream main --tags
+          # 只 fetch main 分支，不拉 --tags：
+          # 上游的 tag 命名（v1.1.8 等）可能与 fork 已有 tag 冲突（fork 用 v1.1.8-docker），
+          # fetch --tags 遇到同名 tag 会拒绝并退出码 1。
+          # sync 只需要 package.json 的 version 字段，不需要上游 tag。
+          git fetch upstream main --no-tags
 
       - name: 对比版本号
         id: check
