@@ -1,0 +1,179 @@
+# ================================================================
+#  hongguo-web · 上游同步与自动发布
+#
+#  触发：
+#    1. schedule（cron）         —— 每 6 小时检查一次上游
+#    2. workflow_dispatch        —— 手动触发，可选 force 强制 sync（即使版本未变）
+#
+#  逻辑：
+#    1. fetch 上游 sunnysky123/hongguo-web 的 main 分支
+#    2. 对比上游 package.json 的 version 字段与当前 fork 的 version
+#    3. 若版本号变化（或 force=true）：
+#       a. git merge upstream/main 到 fork main（保留 Docker 文件，上游没动它们）
+#       b. push 到 fork main
+#       c. 创建并 push tag v<版本号>-docker（如 v1.1.9-docker）
+#    4. tag push 会自动触发 docker.yml workflow 构建镜像并推 GHCR
+#
+#  冲突处理：
+#    上游不会动 fork 的 Docker 相关文件（Dockerfile / docker-compose.yml /
+#    .github/workflows/docker.yml / scripts/docker-entrypoint.sh），所以
+#    merge 一般不会冲突。万一冲突，本 workflow 直接失败，留人工处理。
+#
+#  免责：
+#    - cron 触发在 GitHub 调度繁忙时可能延迟十几分钟，正常
+#    - 每天约 4 次 sync 尝试，几乎不消耗 CI 额度（version 没变时 30 秒退出）
+# ================================================================
+
+name: Sync upstream and tag
+
+on:
+  schedule:
+    # 每 6 小时检查一次：UTC 00:00, 06:00, 12:00, 18:00（北京时间 08/14/20/02）
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: '强制 sync 即使版本号未变（仍会创建新 tag）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    name: 检查并同步上游
+    runs-on: ubuntu-latest
+    # 只在默认分支跑（避免在临时分支触发意外 sync）
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: 检出 fork（完整历史，便于 merge）
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 配置 git 身份
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 添加上游 remote
+        run: |
+          git remote add upstream https://github.com/sunnysky123/hongguo-web.git
+          git fetch upstream main --tags
+
+      - name: 对比版本号
+        id: check
+        run: |
+          set -uo pipefail
+
+          # 提取版本号（与 pack.sh / release.yml 完全相同的 sed 表达式，避免漂移）
+          extract_version() {
+            sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" | head -1
+          }
+
+          # 当前 fork 的版本号
+          CURRENT="$(extract_version package.json)"
+
+          # 上游 main 的版本号
+          UPSTREAM="$(git show upstream/main:package.json | extract_version /dev/stdin)"
+
+          echo "当前 fork 版本：${CURRENT:-<未设置>}"
+          echo "上游   版本：${UPSTREAM:-<未设置>}"
+
+          if [ -z "$UPSTREAM" ]; then
+            echo "::error::上游 package.json 没有 version 字段，无法判断"
+            exit 1
+          fi
+
+          echo "current_version=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "upstream_version=$UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          FORCE="${{ inputs.force || false }}"
+          if [ "$FORCE" = "true" ]; then
+            echo "force=true，强制 sync"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          elif [ "$CURRENT" = "$UPSTREAM" ]; then
+            echo "版本号未变化（$CURRENT），跳过"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "版本号变化：${CURRENT:-<无>} -> $UPSTREAM，将 sync"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检查 tag 是否已存在
+        if: steps.check.outputs.changed == 'true'
+        id: tagcheck
+        run: |
+          TAG="v${{ steps.check.outputs.upstream_version }}-docker"
+          if git tag -l "$TAG" | grep -q .; then
+            echo "tag $TAG 已存在，跳过 sync（可能上次 sync 已完成）"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag $TAG 不存在，将创建"
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Merge 上游 main 到 fork main
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+
+          # merge 上游 main 到当前 main。
+          # --no-edit：用默认 commit message
+          # 不用 --ff-only：上游有新提交时 main 已经在分叉状态，必须 merge commit
+          # 上游不会动 Docker 相关文件，所以不会冲突
+          if ! git merge upstream/main --no-edit; then
+            echo "::error::merge 失败，可能有冲突"
+            echo ""
+            echo "冲突文件："
+            git diff --name-only --diff-filter=U
+            echo ""
+            echo "请手动到 fork 仓库解决冲突："
+            echo "  git fetch upstream"
+            echo "  git merge upstream/main"
+            echo "  # 解决冲突后"
+            echo "  git push origin main"
+            exit 1
+          fi
+
+      - name: Push 到 fork main
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        run: |
+          git push origin main
+
+      - name: 创建并 push tag
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        run: |
+          TAG="${{ steps.tagcheck.outputs.tag }}"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "✅ 已创建并推送 tag: $TAG"
+          echo "tag push 会自动触发 docker.yml workflow 构建并推送镜像"
+
+      - name: 等待 docker workflow 触发
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        run: |
+          echo "查看构建进度："
+          echo "  https://github.com/${{ github.repository }}/actions/workflows/docker.yml"
+          echo ""
+          echo "约 5-10 分钟后镜像会推到："
+          echo "  ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.check.outputs.upstream_version }}-docker"
+          echo "  ghcr.io/${{ github.repository_owner }}/hongguo-web:latest"
+
+      - name: 摘要
+        if: always()
+        run: |
+          if [ "${{ steps.check.outputs.changed }}" != "true" ]; then
+            echo "**未同步**：上游版本号未变化（${{ steps.check.outputs.current_version }}）"
+          elif [ "${{ steps.tagcheck.outputs.exists }}" = "true" ]; then
+            echo "**未同步**：tag ${{ steps.tagcheck.outputs.tag }} 已存在"
+          else
+            echo "**已同步**：${{ steps.check.outputs.current_version }} -> ${{ steps.check.outputs.upstream_version }}"
+            echo "**已打 tag**：${{ steps.tagcheck.outputs.tag }}"
+            echo "Docker 镜像构建已自动触发，等 5-10 分钟。"
+          fi
