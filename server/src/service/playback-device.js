@@ -40,7 +40,7 @@ const REGISTER_UA = 'com.phoenix.read/73932 (Linux; U; Android 16; zh_CN; 25053R
 /** 注册失败后的重试冷却（毫秒）：冷却期内复用失败结果，避免每个请求都去打上游。 */
 const RETRY_COOLDOWN_MS = 60000;
 
-/** 当前注册结果（Promise）。成功后永久复用；失败仅在冷却期内复用。 */
+/** 当前注册结果（Promise）。成功后复用至主动失效；失败仅在冷却期内复用。 */
 let registration = null;
 
 /** 当前缓存的失败时间戳（毫秒）；0 表示缓存的是成功结果。 */
@@ -153,10 +153,17 @@ function getPlaybackDevice() {
 }
 
 /**
- * 清空注册缓存。预热重试等场景显式调用，让下一次 getPlaybackDevice()
- * 真正重新发起注册（否则重试打的是同一个失败结果）。
+ * 清空注册缓存；传入被拒绝的 ID 时仅失效匹配的注册结果，避免并发误清新身份。
+ * 下一次 getPlaybackDevice() 将重新发起注册。
  */
-function resetPlaybackDevice() {
+async function resetPlaybackDevice(rejectedDeviceId) {
+  const pending = registration;
+  if (pending === null) return;
+  let current = null;
+  try { current = await pending; } catch (e) { /* 清除失败的注册结果 */ }
+  if (registration !== pending) return;
+  if (rejectedDeviceId !== undefined && rejectedDeviceId !== null
+      && current !== null && current.device_id !== String(rejectedDeviceId)) return;
   registration = null;
   failedAt = 0;
 }

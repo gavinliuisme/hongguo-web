@@ -2,7 +2,7 @@
 /**
  * 红果短剧 API 客户端。
  *
- * 核心语义：设备身份池、_rticket 时间戳、x-ss-stub MD5、列表类接口免签、
+ * 核心语义：稳定设备身份、_rticket 时间戳、x-ss-stub MD5、列表类接口免签、
  * 剧集详情缓存、风控/登录态退避重试。
  *
  * 两处关键架构：
@@ -92,18 +92,6 @@ const USER_AGENT = Log.env('HONGGUO_UA',
   Object.prototype.hasOwnProperty.call(_sessionHeaders, 'user-agent')
     ? _sessionHeaders['user-agent'] : 'hongguo-web/1.0');
 
-/** 设备身份池（DEVICE_POOL_SIZE > 0 时启用；托管模式固定单设备）。 */
-const POOL = Safeguards.loadDevicePool(
-  BASE_QUERY,
-  Log.envInt('DEVICE_POOL_SIZE', 0),
-  MANAGED,
-  IDENTITY.deviceId,
-);
-
-function currentDevice() {
-  return POOL === null ? null : POOL.current();
-}
-
 function identity() { return IDENTITY; }
 
 // ==================== 榜单 / 体裁常量 ====================
@@ -181,8 +169,6 @@ const FILTER_STATUS = {};
 function buildUrl(pathname, extra, rticket) {
   if (rticket === undefined || rticket === null) rticket = Date.now();
   const q = Object.assign({}, BASE_QUERY);
-  const dev = currentDevice();
-  if (dev !== null) Object.assign(q, dev.query);
   if (extra !== null && extra !== undefined) Object.assign(q, extra);
   q._rticket = String(rticket);
 
@@ -196,14 +182,6 @@ function buildUrl(pathname, extra, rticket) {
 /** 构造基础请求头与请求体。 */
 function buildHeaders(body) {
   const headers = Object.assign({}, sessionHeaders());
-  const dev = currentDevice();
-  if (dev !== null) {
-    if (dev.userAgent !== null && dev.userAgent !== undefined) {
-      headers['user-agent'] = dev.userAgent;
-    }
-    delete headers['x-tt-token'];
-    delete headers['cookie'];
-  }
   if (!Object.prototype.hasOwnProperty.call(headers, 'user-agent')) {
     headers['user-agent'] = USER_AGENT;
   }
@@ -273,12 +251,26 @@ async function apiOnce(method, pathname, body, extraQuery, signed) {
 /** 带重试退避 + 登录态刷新的 API 调用。 */
 async function api(method, pathname, body, extraQuery, maxRetries, signed) {
   let last = null;
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
+  let attempts = maxRetries;
+  let deviceIdRetryUsed = false;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const requestDeviceId = IDENTITY.deviceId;
     try {
       return await apiOnce(method, pathname, body, extraQuery, signed);
     } catch (e) {
       if (e instanceof Safeguards.AuthExpiredError
           || e instanceof Safeguards.RiskControlError) {
+        if (e instanceof Safeguards.RiskControlError
+            && e.safeResponse !== null && e.safeResponse.device_id_rejected
+            && !deviceIdRetryUsed) {
+          const nextId = Device.rotateDeviceId(BASE_QUERY, IDENTITY, requestDeviceId);
+          if (nextId !== null && nextId !== requestDeviceId) {
+            deviceIdRetryUsed = true;
+            attempts++;
+            Log.warn('上游拒绝当前 device_id，已更新本地身份并重试一次');
+            continue;
+          }
+        }
         if (MANAGED) throw e; // 托管模式不刷新被抓包的登录态
         last = e;
         if (e instanceof Safeguards.AuthExpiredError) {

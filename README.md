@@ -22,24 +22,50 @@
 
 ### 挑哪个包
 
-| 你的系统 | 下载的文件（`1.1.8` 为例） |
+| 你的系统 | 下载的文件（`1.2.0` 为例） |
 |---|---|
-| Windows x86-64（绝大多数 PC） | `hongguo-web-1.1.8-Windows-x64.zip` |
-| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.1.8-Windows-arm.zip` |
-| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.1.8-Linux-x64.zip` |
-| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.1.8-Linux-arm.zip` |
-| macOS Apple 芯片（M 系列） | `hongguo-web-1.1.8-macOS-arm.zip` |
+| Windows x86-64（绝大多数 PC） | `hongguo-web-1.2.0-Windows-x64.zip` |
+| Windows ARM64（骁龙等 ARM 电脑） | `hongguo-web-1.2.0-Windows-arm.zip` |
+| Linux x86-64（主流发行版、x86 云服务器） | `hongguo-web-1.2.0-Linux-x64.zip` |
+| Linux ARM64（树莓派、ARM 云主机、ARM 发行版） | `hongguo-web-1.2.0-Linux-arm.zip` |
+| macOS Apple 芯片（M 系列） | `hongguo-web-1.2.0-macOS-arm.zip` |
+| **旧版 Linux**（x86-64，新版 Node 跑不动） | `hongguo-web-1.2.0-Linux-x64-node24.zip` |
+| **旧版 Linux**（ARM64，新版 Node 跑不动） | `hongguo-web-1.2.0-Linux-arm-node24.zip` |
 
 > 文件名里的版本号就是 `package.json` 的 `version` 字段，
 > 和包内「平台说明.txt」末尾标的版本一致 —— 两者对得上就说明下对了。
 >
-> 五个包内置的都是**目标平台原生的** Node 运行时（nodejs.org 对
+> 七个包内置的都是**目标平台原生的** Node 运行时（nodejs.org 对
 > Windows on ARM64、Linux arm64、macOS arm64 都有官方构建）。
+
+#### `-node24` 后缀的包是什么
+
+**仅供不兼容新版 Node.js 的机器使用**，正常环境请忽略它们。
+
+默认包内置的是当前最新 LTS（本文写作时为 Node 26.x，实际版本以包内
+「平台说明.txt」为准）。Node 26 的官方 Linux 二进制
+要求较新的系统库（glibc 2.28+ 等），在 CentOS 7、Debian 9/10、
+Ubuntu 18.04 这类较老的发行版上会直接起不来，典型报错：
+
+```
+./node/bin/node: /lib64/libc.so.6: version `GLIBC_2.28' not found
+./node/bin/node: /usr/lib64/libstdc++.so.6: version `GLIBCXX_3.4.25' not found
+bash: ./node/bin/node: cannot execute binary file
+```
+
+确认 `node -v` 或 `scripts/start.sh` 报上面这类错误时，改下带 `-node24`
+的包即可 —— 它内置 Node 24.x（同一份代码，功能完全一致，只是运行时更旧、
+兼容更多老系统）。能正常跑默认包的机器**不要**用这个版本，它不会更快，
+也不会更省内存。
+
+> 这两个包由 `scripts/pack.sh` 一并产出，代码、功能、配置与默认包完全相同，
+> 唯一差别是 `node/` 目录里放的是 Node 24 运行时。判断包内到底是哪一版：
+> 看包内「平台说明.txt」，或执行 `./node/bin/node -v`。
 
 ### 解压并确认结构
 
 用系统自带的解压工具（Windows 下右键「全部解压缩」，
-Linux / macOS 下 `unzip hongguo-web-1.1.8-*.zip`）解开后，进入解压出来的目录：
+Linux / macOS 下 `unzip hongguo-web-1.2.0-*.zip`）解开后，进入解压出来的目录：
 
 ```bash
 # Linux / macOS 示例：包内结构直接铺在当前目录
@@ -49,7 +75,7 @@ ls
 应看到 `web/`、`server/`、`scripts/`、
 `node/` 以及「平台说明.txt」。`node/` 就是内置的 Node.js LTS 运行时，**无需再装 Node**。
 
-* Windows 资源管理器会多套一层 `hongguo-web-1.1.8-Windows-x64\` 同名文件夹，进不去记得再钻一层。
+* Windows 资源管理器会多套一层 `hongguo-web-1.2.0-Windows-x64\` 同名文件夹，进不去记得再钻一层。
 * 命令行 `unzip` 不会自动套文件夹，包内结构直接铺在当前目录。
 
 包内结构就是完整可运行的程序，后面所有命令都在这个目录里执行。
@@ -117,6 +143,9 @@ cd hongguo-web
 **发行包**：每个平台的包都由 `scripts/pack.sh` 打包时放入对应平台的
 Node.js LTS 运行时，解压即用，目标机无需预装 Node；
 启动脚本也不会联网下载任何运行时。
+
+Linux 另有两个 `-node24` 变体，内置 Node 24 而非最新 LTS，专供跑不动
+新版 Node 的老发行版（glibc 过旧等）使用，详见「一、下载发行包 → 挑哪个包」。
 
 **源码 checkout**：仓库里没有 Node，`start.bat` / `start.sh` 按以下顺序查找：
 
@@ -391,7 +420,6 @@ curl -H "x-api-key: <key>" \
 | `ADMIN_TOKEN` | 空 | `/admin/*` 与 `/stats` 的管理令牌。不设时首次启动自动生成 64 位口令并写入 `server/config/apikeys.json` 的 `admin_token`，重启沿用；环境变量优先 | `server/config/apikeys.json` 的 `admin_token` |
 | `RATE_PER_MIN` | `120` | 每分钟请求上限（限流） | 无，仅环境变量 |
 | `HG_THROTTLE_MS` | `260` | 上游请求串行节流间隔（毫秒） | `runtime.throttle_ms` |
-| `DEVICE_POOL_SIZE` | `0` | 设备身份池大小，0 为关闭 | 无，仅环境变量 |
 | `HONGGUO_HOST` | 见 config | 上游 host | 无（默认取 `config.json` 的 `upstream.api_host`） |
 | `HONGGUO_UA` | `hongguo-web/1.0` | 上游 User-Agent | 无（默认取 `config.json` 的 `upstream.session_headers.user-agent`） |
 | `HONGGUO_DATA_DIR` | `server` | 视频解密缓存目录（缓存落在其下 `stream-cache/`；设备标识与链路密钥同存于 `server/config/apikeys.json`，不随本项变化） | `runtime.data_dir` |
@@ -440,7 +468,7 @@ start.bat > run.log 2>&1
 node server/src/main.js --selftest
 ```
 
-覆盖 21 组共 **169 项**断言：
+覆盖 21 组共 **173 项**断言：
 
 | 组 | 内容 |
 |---|---|
@@ -490,7 +518,7 @@ hongguo-web/
 ├── scripts/
 │   ├── start.bat / start.sh   一键启动
 │   ├── stop.bat / stop.sh     停止服务
-│   └── pack.sh                打包 5 个平台发行版（内置 Node 运行时）
+│   └── pack.sh                打包 7 个平台发行版（内置 Node 运行时）
 ├── server/
 │   ├── src/                   Node 后端源码（零第三方依赖）
 │   │   ├── main.js            入口（--config / --stop / --selftest / --version）
@@ -534,6 +562,31 @@ hongguo-web/
 
 ## 九、常见问题
 
+**Q：Linux 上解压后 `start.sh` 起不来，报 `GLIBC_2.28 not found` 或 `cannot execute binary file`？**
+
+A：你下的是默认包，它内置的是最新 LTS（Node 26.x）。Node 26 官方的
+Linux 二进制要求较新的系统库，CentOS 7、Debian 9/10、Ubuntu 18.04
+这类老发行版会直接无法执行。
+
+改下带 `-node24` 后缀的包：
+
+| 你的架构 | 换成 |
+|---|---|
+| x86-64 | `hongguo-web-<版本>-Linux-x64-node24.zip` |
+| ARM64 | `hongguo-web-<版本>-Linux-arm-node24.zip` |
+
+它内置 Node 24.x，对老系统兼容性更好，**功能与默认包完全一致**。
+
+自查命令：
+
+```bash
+./node/bin/node -v    # 看当前包内置的版本（v26.x / v24.x）
+ldd ./node/bin/node   # 老系统上会列出 not found 的库
+```
+
+另一种办法：如果本机已经装了 Node 18+，删掉包里的 `node/` 目录，
+启动脚本会自动回落到系统 Node。
+
 **Q：`/search` 返回 `code:100103 PARAM_INVALID`？**
 
 A：按顺序排查：
@@ -549,6 +602,10 @@ A：按顺序排查：
 3. 确认没有把 `HONGGUO_DEVICE_ID` 设成非法值。
 4. 多实例同时运行时，用 `HONGGUO_DEVICE_ID` 给每个实例指定不同且稳定的值。
 
+若上游明确返回 `device_id` 无效、受限或被拒绝，程序会为本地生成/存储的身份
+生成新值、写回 `apikeys.json` 并重试一次。通过环境变量或配置文件显式指定的身份
+不会自动覆盖；普通限流、验证码等风控响应也不会触发换号。
+
 > **为什么 `device_id` 是必需的**：搜索接口会比其它接口多校验一项设备标识。
 > 实测同一套请求参数，缺 `device_id` 时上游返回 53 字节的
 > `PARAM_INVALID`，补上后即 `code=0` + 完整结果（几十~上百 KB）。
@@ -557,7 +614,8 @@ A：按顺序排查：
 > 返回 HTTP 200 但 body 为空。修复方案因此只生成 `device_id`。
 
 `device_id` 相当于本机的设备指纹，**请勿随意删除或改动** `apikeys.json` 里的
-`device_id`：短时间内身份跳变会被上游判定为异常流量。
+`device_id`：短时间内身份跳变会被上游判定为异常流量。自动轮换仅在上游明确拒绝
+当前身份时发生。
 
 **Q：首播为什么慢？第二集为什么还要等一会儿？**
 
@@ -609,12 +667,13 @@ A：这是上游的风控行为，与本地无关：`search` / `multi_video_deta
 「匿名设备注册 + 无签名请求」：先由 `playback-device.js` 注册匿名设备，
 再用注册返回的 device_id/iid 取流（成功结果同进程复用；失败结果只缓存
 60 秒，之后自动重新注册，无需重启）。
-该接口返回空 body 通常意味着设备身份被上游拒绝，与签名无关：
-先确认设备注册是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
+该接口返回空 body 通常意味着匿名设备身份被上游拒绝或 IP 风控，与签名无关；
+预热重试时会失效本次身份并重新注册，最多重试 2 次。若仍失败，先确认设备注册
+是否成功（调试可开 `HG_APPSOURCE_DEBUG=1` 看原始响应）。
 若注册本身失败，多半是本机到 `log5-applog-lf.fqnovel.com` 的网络问题
 （DNS 解析、代理分流、防火墙），可用
 `curl -m 10 -X POST 'https://log5-applog-lf.fqnovel.com/service/2/device_register/?tt_data=a'`
-看是否能通；预热重试时会自动清空注册缓存重发一次，仍失败则是环境问题。
+看是否能通；注册失败时预热重试会自动重发注册，仍失败则检查网络环境。
 排查时先核对上游端点路径（取直链为 b 域名 `multi_video_model/v1`，
 其余为 `preload/v1`）。
 
@@ -671,9 +730,16 @@ A：完整包大部分体积是内置的 Node.js LTS 运行时——
 
 **Q：打包要联网吗？**
 
-A：要。`pack.sh` 从 nodejs.org 按平台下载对应 Node 运行时，首次约 250MB。
+A：要。`pack.sh` 从 nodejs.org 按平台下载对应 Node 运行时，首次约 370MB
+（5 个常规包约 250MB，两个 Linux `-node24` 包再各约 60MB）。
 下载的运行时会用官方的 `SHASUMS256.txt` 做 SHA-256 校验，缓存在 `.pack-cache/`，
 同一平台重复打包不再联网。可用 `HG_NODE_VERSION` 固定版本号（缺省取最新 LTS）。
+
+`-node24` 变体的版本号**不受** `HG_NODE_VERSION` 影响，始终取 24.x 的最新 LTS；
+除非你把 `HG_NODE_VERSION` 显式设成 24.x（此时两者一致，等于全部固定到 24 线）。
+
+只打常规 Linux 包：`bash scripts/pack.sh Linux-x64 Linux-arm`；
+只打 Node 24 兼容包：`bash scripts/pack.sh Linux-x64-node24 Linux-arm-node24`。
 只想打一个平台时用 `bash scripts/pack.sh Linux-arm`，
 `bash scripts/pack.sh --list` 可列出全部平台名。
 
