@@ -181,7 +181,7 @@ jobs:
           gh release create "$TAG" \
             --repo "$REPO" \
             --target main \
-            --title "自动同步自上游 v${{ steps.check.outputs.upstream_version }}" \ 
+            --title "自动同步到 v${{ steps.check.outputs.upstream_version }}" \ 
             --notes "自动同步自上游 sunnysky123/hongguo-web v${{ steps.check.outputs.upstream_version }}
 
           - 上游版本：v${{ steps.check.outputs.upstream_version }}
