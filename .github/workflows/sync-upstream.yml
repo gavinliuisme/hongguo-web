@@ -161,14 +161,76 @@ jobs:
           # 远程有新变化时拒绝（避免覆盖别人的提交）。
           git push --force-with-lease origin main
 
-      - name: 创建并 push tag
+      - name: 创建并 push tag（含验证）
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           TAG="${{ steps.tagcheck.outputs.tag }}"
-          git tag "$TAG"
-          git push origin "$TAG"
-          echo "✅ 已创建并推送 tag: $TAG"
+          REPO="${{ github.repository }}"
+          SHA="$(git rev-parse HEAD)"
+          echo "当前 HEAD: $SHA"
+          echo "将创建 tag: $TAG"
+
+          # 方法 1：用 gh CLI 创建 release（同时创建 tag）
+          # 比 git push tag 更可靠：API 直接返回结果，能立刻看到错误。
+          # 同时 release 也会出现在 Releases 页面，方便用户查看。
+          # --target main：确保 tag 指向 main 当前 HEAD
+          # --title / --notes：release 标题和说明
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target main \
+            --title "Docker mirror of upstream ${{ steps.check.outputs.upstream_version }}" \
+            --notes "自动同步自上游 sunnysky123/hongguo-web v${{ steps.check.outputs.upstream_version }}
+
+          - 上游版本：v${{ steps.check.outputs.upstream_version }}
+          - 镜像地址：
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.check.outputs.upstream_version }}-docker\`
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
+
+          由 sync-upstream workflow 自动生成。" \
+            --generate-notes
+
+          echo "✅ 已创建 release 和 tag: $TAG"
+          echo ""
+
+          # 验证 tag 真的存在
+          echo "--- 验证 tag ---"
+          if gh api "repos/$REPO/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "✅ tag $TAG 已存在于 GitHub"
+          else
+            echo "::error::tag $TAG 创建后验证失败"
+            exit 1
+          fi
+
+          echo ""
           echo "tag push 会自动触发 docker.yml workflow 构建并推送镜像"
+          echo "（若 GITHUB_TOKEN 触发的 tag push 未自动触发 docker.yml，下一步会兜底）"
+
+      - name: 兜底触发 docker workflow
+        # GitHub 设计：用 GITHUB_TOKEN 推的 tag 不会触发其他 workflow（防递归）
+        # 所以这里用 gh workflow run 主动触发 docker.yml，确保构建一定发生
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+          TAG="${{ steps.tagcheck.outputs.tag }}"
+
+          # 等 5 秒让 release/tag 完全落地
+          sleep 5
+
+          # 用 workflow_dispatch 直接触发 docker.yml
+          # ref 用刚创建的 tag，docker.yml 会识别为 tag 触发，自动推 :latest + :版本号
+          echo "主动触发 docker.yml workflow（ref=$TAG）..."
+          gh workflow run docker.yml \
+            --repo "$REPO" \
+            --ref "$TAG"
+
+          echo "✅ 已触发 docker.yml"
+          echo "查看进度：https://github.com/$REPO/actions/workflows/docker.yml"
 
       - name: 等待 docker workflow 触发
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
