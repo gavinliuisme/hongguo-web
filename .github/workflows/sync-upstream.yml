@@ -127,6 +127,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          # 关键：先把 origin/main 拉下来 rebase，否则 push 会被拒（non-fast-forward）
+          # 原因：actions/checkout 拿的是 CI 启动那一刻的 main 快照，
+          #       CI 启动后若 fork main 又有新 commit（如刚改了 workflow 文件），
+          #       本地 main 就落后于远程，merge 完 push 会被拒。
+          git fetch origin main --no-tags
+          git rebase origin/main
+
           # merge 上游 main 到当前 main。
           # --no-edit：用默认 commit message
           # 不用 --ff-only：上游有新提交时 main 已经在分叉状态，必须 merge commit
@@ -148,7 +155,11 @@ jobs:
       - name: Push 到 fork main
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
         run: |
-          git push origin main
+          # 用 --force-with-lease 兜底：理论上 rebase 后是 fast-forward，
+          # 但若 CI 期间 origin/main 又有新 push（如另一个 sync 重跑），
+          # 普通 push 会被拒。--force-with-lease 会在远程未变化时强推，
+          # 远程有新变化时拒绝（避免覆盖别人的提交）。
+          git push --force-with-lease origin main
 
       - name: 创建并 push tag
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
