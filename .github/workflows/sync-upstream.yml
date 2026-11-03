@@ -168,15 +168,17 @@ jobs:
               echo "exists=false" >> "$GITHUB_OUTPUT"
             fi
           else
-            # upstream_commits 或 force 场景：用时间戳后缀
-            TS="$(date -u +%Y%m%d-%H%M%S)"
+            # upstream_commits 或 force 场景：用北京时间时间戳后缀
+            # 用 Asia/Shanghai 时区（UTC+8），比 UTC 更直观
+            # 格式：v1.2.2-docker.20261103-0944 (YYYYMMDD-HHMM 北京时间)
+            TS="$(TZ=Asia/Shanghai date +%Y%m%d-%H%M)"
             TAG="${BASE_TAG}.${TS}"
-            # 极小概率同一秒内重复触发，加 SHA 短哈希进一步去重
+            # 极小概率同一分钟内重复触发，加 SHA 短哈希进一步去重
             if git tag -l "$TAG" | grep -q .; then
               SHA7="$(git rev-parse --short=7 upstream/main)"
               TAG="${BASE_TAG}.${TS}.${SHA7}"
             fi
-            echo "使用时间戳后缀的 tag：$TAG"
+            echo "使用北京时间时间戳后缀的 tag：$TAG"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
