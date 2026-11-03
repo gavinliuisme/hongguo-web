@@ -69,7 +69,7 @@ jobs:
           # sync 只需要 package.json 的 version 字段，不需要上游 tag。
           git fetch upstream main --no-tags
 
-      - name: 对比版本号
+      - name: 对比版本号与上游 commit
         id: check
         run: |
           set -uo pipefail
@@ -96,31 +96,93 @@ jobs:
           echo "current_version=$CURRENT" >> "$GITHUB_OUTPUT"
           echo "upstream_version=$UPSTREAM" >> "$GITHUB_OUTPUT"
 
+          # ---- 检查上游是否有 fork 还没合并的 commit ----
+          # git rev-list A..B 列出 B 有但 A 没有的 commit。
+          # 这里列 upstream/main 有但 origin/main 没有的 commit。
+          # 注意：origin/main 此时是 actions/checkout 时的快照，可能落后于远程最新，
+          #       但用于判断"上游是否有 fork 没有的 commit"已经够用 ——
+          #       若 upstream/main..origin/main 为空说明 fork 在 CI 启动那一刻已含上游全部 commit。
+          # 取 origin/main 的 HEAD SHA（actions/checkout 已 fetch 完整历史）
+          FORK_HEAD="$(git rev-parse origin/main)"
+          UPSTREAM_HEAD="$(git rev-parse upstream/main)"
+          echo "fork HEAD     : $FORK_HEAD"
+          echo "upstream HEAD : $UPSTREAM_HEAD"
+
+          # upstream/main 有但 origin/main 没有的 commit 数
+          BEHIND_COUNT="$(git rev-list --count "origin/main..upstream/main" 2>/dev/null || echo 0)"
+          echo "上游领先 fork 的 commit 数：$BEHIND_COUNT"
+
+          # 同时检查 fork main 的 commit 是否已包含 upstream HEAD
+          # （如果 fork main 已经包含 upstream HEAD，说明 fork 至少跟上游齐平）
+          if [ "$BEHIND_COUNT" = "0" ]; then
+            HAS_UPSTREAM_COMMITS="false"
+          else
+            HAS_UPSTREAM_COMMITS="true"
+          fi
+          echo "上游有 fork 未合并的 commit：$HAS_UPSTREAM_COMMITS"
+          echo "has_upstream_commits=$HAS_UPSTREAM_COMMITS" >> "$GITHUB_OUTPUT"
+
           FORCE="${{ inputs.force || false }}"
           if [ "$FORCE" = "true" ]; then
             echo "force=true，强制 sync"
             echo "changed=true" >> "$GITHUB_OUTPUT"
-          elif [ "$CURRENT" = "$UPSTREAM" ]; then
-            echo "版本号未变化（$CURRENT），跳过"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
+            echo "reason=force" >> "$GITHUB_OUTPUT"
+          elif [ "$CURRENT" != "$UPSTREAM" ]; then
             echo "版本号变化：${CURRENT:-<无>} -> $UPSTREAM，将 sync"
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=version_changed" >> "$GITHUB_OUTPUT"
+          elif [ "$HAS_UPSTREAM_COMMITS" = "true" ]; then
+            # 版本号未变，但上游有 fork 没有的 commit（如 bug 修复、文档更新）
+            echo "版本号未变，但上游有 $BEHIND_COUNT 个新 commit，将 sync"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "reason=upstream_commits" >> "$GITHUB_OUTPUT"
+          else
+            echo "版本号未变化（$CURRENT）且上游无新 commit，跳过"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no_change" >> "$GITHUB_OUTPUT"
           fi
 
       - name: 检查 tag 是否已存在
         if: steps.check.outputs.changed == 'true'
         id: tagcheck
         run: |
-          TAG="v${{ steps.check.outputs.upstream_version }}-docker"
-          if git tag -l "$TAG" | grep -q .; then
-            echo "tag $TAG 已存在，跳过 sync（可能上次 sync 已完成）"
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          set -uo pipefail
+          BASE_TAG="v${{ steps.check.outputs.upstream_version }}-docker"
+          REASON="${{ steps.check.outputs.reason }}"
+
+          # 不同触发场景用不同的 tag 命名策略：
+          # - reason=version_changed（版本号变了）：
+          #     用基础 tag，如 v1.2.3-docker。已存在则跳过（说明上次 sync 已完成）
+          # - reason=upstream_commits（版本号没变但上游有新 commit）：
+          #     用带时间戳后缀的 tag，如 v1.2.2-docker.20261102-1421
+          #     这样同一版本号可以发多次镜像，记录每次 sync 的时间
+          # - reason=force（手动强制）：
+          #     同样用时间戳后缀，避免覆盖已有 tag
+          if [ "$REASON" = "version_changed" ]; then
+            TAG="$BASE_TAG"
+            if git tag -l "$TAG" | grep -q .; then
+              echo "tag $TAG 已存在，跳过 sync（版本号升级场景，上次 sync 已完成）"
+              echo "exists=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "tag $TAG 不存在，将创建"
+              echo "exists=false" >> "$GITHUB_OUTPUT"
+            fi
           else
-            echo "tag $TAG 不存在，将创建"
+            # upstream_commits 或 force 场景：用时间戳后缀
+            TS="$(date -u +%Y%m%d-%H%M%S)"
+            TAG="${BASE_TAG}.${TS}"
+            # 极小概率同一秒内重复触发，加 SHA 短哈希进一步去重
+            if git tag -l "$TAG" | grep -q .; then
+              SHA7="$(git rev-parse --short=7 upstream/main)"
+              TAG="${BASE_TAG}.${TS}.${SHA7}"
+            fi
+            echo "使用时间戳后缀的 tag：$TAG"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "base_tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
       - name: Merge 上游 main 到 fork main
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
@@ -169,27 +231,64 @@ jobs:
           set -euo pipefail
           TAG="${{ steps.tagcheck.outputs.tag }}"
           REPO="${{ github.repository }}"
+          REASON="${{ steps.check.outputs.reason }}"
           SHA="$(git rev-parse HEAD)"
           echo "当前 HEAD: $SHA"
           echo "将创建 tag: $TAG"
+          echo "触发原因: $REASON"
 
-          # 方法 1：用 gh CLI 创建 release（同时创建 tag）
-          # 比 git push tag 更可靠：API 直接返回结果，能立刻看到错误。
-          # 同时 release 也会出现在 Releases 页面，方便用户查看。
-          # --target main：确保 tag 指向 main 当前 HEAD
-          # --title / --notes：release 标题和说明
-          gh release create "$TAG" \
-            --repo "$REPO" \
-            --target main \
-            --title "自动同步到 v${{ steps.check.outputs.upstream_version }}" \ 
-            --notes "自动同步自上游 sunnysky123/hongguo-web v${{ steps.check.outputs.upstream_version }}
+          # 根据 reason 生成不同的 release 说明
+          case "$REASON" in
+            version_changed)
+              TITLE="自动同步到 v${{ steps.check.outputs.upstream_version }}"
+              NOTES="自动同步自上游 sunnysky123/hongguo-web v${{ steps.check.outputs.upstream_version }}
 
           - 上游版本：v${{ steps.check.outputs.upstream_version }}
+          - 触发原因：版本号变化
           - 镜像地址：
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.check.outputs.upstream_version }}-docker\`
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
 
-          由 sync-upstream workflow 自动生成。" \
+          由 sync-upstream workflow 自动生成。"
+              ;;
+            upstream_commits)
+              TITLE="自动同步到 v${{ steps.check.outputs.upstream_version }} (代码更新)"
+              NOTES="版本号未变（仍为 ${{ steps.check.outputs.upstream_version }}），但上游有新 commit
+
+          - 上游版本：v${{ steps.check.outputs.upstream_version }}（未变）
+          - 触发原因：上游有 fork 未合并的 commit
+          - tag 带时间戳后缀：$TAG
+          - 镜像地址：
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}\`
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
+
+          由 sync-upstream workflow 自动生成。"
+              ;;
+            force)
+              TITLE="手动强制同步 v${{ steps.check.outputs.upstream_version }}"
+              NOTES="手动触发 sync-upstream workflow 并勾选 force=true
+
+          - 上游版本：v${{ steps.check.outputs.upstream_version }}
+          - 触发原因：手动强制
+          - tag 带时间戳后缀：$TAG
+          - 镜像地址：
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}\`
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
+
+          由 sync-upstream workflow 自动生成。"
+              ;;
+            *)
+              TITLE="自动同步 v${{ steps.check.outputs.upstream_version }}"
+              NOTES="触发原因：$REASON"
+              ;;
+          esac
+
+          # 用 gh CLI 创建 release（同时创建 tag）
+          gh release create "$TAG" \
+            --repo "$REPO" \
+            --target main \
+            --title "$TITLE" \
+            --notes "$NOTES" \
             --generate-notes
 
           echo "✅ 已创建 release 和 tag: $TAG"
@@ -239,18 +338,30 @@ jobs:
           echo "  https://github.com/${{ github.repository }}/actions/workflows/docker.yml"
           echo ""
           echo "约 5-10 分钟后镜像会推到："
-          echo "  ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.check.outputs.upstream_version }}-docker"
+          echo "  ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}"
           echo "  ghcr.io/${{ github.repository_owner }}/hongguo-web:latest"
 
       - name: 摘要
         if: always()
         run: |
-          if [ "${{ steps.check.outputs.changed }}" != "true" ]; then
-            echo "**未同步**：上游版本号未变化（${{ steps.check.outputs.current_version }}）"
+          REASON="${{ steps.check.outputs.reason }}"
+          if [ "$REASON" = "no_change" ] || [ -z "$REASON" ]; then
+            echo "**未同步**：版本号未变（${{ steps.check.outputs.current_version }}）且上游无新 commit"
           elif [ "${{ steps.tagcheck.outputs.exists }}" = "true" ]; then
             echo "**未同步**：tag ${{ steps.tagcheck.outputs.tag }} 已存在"
           else
-            echo "**已同步**：${{ steps.check.outputs.current_version }} -> ${{ steps.check.outputs.upstream_version }}"
+            case "$REASON" in
+              force)
+                echo "**手动强制 sync**：force=true"
+                ;;
+              version_changed)
+                echo "**已同步**（版本号升级）：${{ steps.check.outputs.current_version }} -> ${{ steps.check.outputs.upstream_version }}"
+                ;;
+              upstream_commits)
+                echo "**已同步**（版本号未变但上游有新 commit）"
+                echo "  上游版本仍为：${{ steps.check.outputs.upstream_version }}"
+                ;;
+            esac
             echo "**已打 tag**：${{ steps.tagcheck.outputs.tag }}"
             echo "Docker 镜像构建已自动触发，等 5-10 分钟。"
           fi
