@@ -186,6 +186,37 @@ jobs:
           echo "base_tag=$BASE_TAG" >> "$GITHUB_OUTPUT"
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
+      - name: 抓取上游 release notes
+        # 用 GitHub API 拿上游对应 tag 的 release body，
+        # 作为 fork release 的说明一部分，让用户看到上游改了啥。
+        # 拿不到（如上游没发 release，只是改了 version）则用占位文本。
+        if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
+        id: upstream_notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          UPSTREAM_TAG="v${{ steps.check.outputs.upstream_version }}"
+          echo "尝试获取上游 release: $UPSTREAM_TAG"
+
+          # 用 gh api 拿上游 release body
+          # --jq 直接提取 body 字段，失败返回空
+          BODY="$(gh api "repos/sunnysky123/hongguo-web/releases/tags/$UPSTREAM_TAG" --jq '.body' 2>/dev/null || true)"
+
+          if [ -z "$BODY" ] || [ "$BODY" = "null" ]; then
+            echo "上游 $UPSTREAM_TAG 没有 release 或 body 为空，用占位文本"
+            BODY="（上游 $UPSTREAM_TAG 未发布 release，或 release 无说明）"
+          else
+            echo "✅ 已获取上游 release notes（${#BODY} 字符）"
+          fi
+
+          # 写到文件，避免 GITHUB_OUTPUT 多行字符串难处理
+          echo "$BODY" > /tmp/upstream_release_notes.md
+          echo "notes_file=/tmp/upstream_release_notes.md" >> "$GITHUB_OUTPUT"
+          echo ""
+          echo "--- 上游 release notes 预览 ---"
+          head -20 /tmp/upstream_release_notes.md
+
       - name: Merge 上游 main 到 fork main
         if: steps.check.outputs.changed == 'true' && steps.tagcheck.outputs.exists == 'false'
         run: |
@@ -234,64 +265,98 @@ jobs:
           TAG="${{ steps.tagcheck.outputs.tag }}"
           REPO="${{ github.repository }}"
           REASON="${{ steps.check.outputs.reason }}"
+          UPSTREAM_TAG="v${{ steps.check.outputs.upstream_version }}"
           SHA="$(git rev-parse HEAD)"
+          NOTES_FILE="/tmp/upstream_release_notes.md"
           echo "当前 HEAD: $SHA"
           echo "将创建 tag: $TAG"
           echo "触发原因: $REASON"
 
+          # 读上游 release notes（前面步骤已写到文件）
+          if [ ! -f "$NOTES_FILE" ]; then
+            echo "（上游 release notes 文件不存在，用占位）" > "$NOTES_FILE"
+          fi
+          UPSTREAM_NOTES="$(cat "$NOTES_FILE")"
+
           # 根据 reason 生成不同的 release 说明
+          # 公共头：所有 reason 都包含上游版本、镜像地址
           case "$REASON" in
             version_changed)
               TITLE="自动同步到 v${{ steps.check.outputs.upstream_version }}"
-              NOTES="自动同步自上游 sunnysky123/hongguo-web v${{ steps.check.outputs.upstream_version }}
+              HEADER="自动同步自上游 sunnysky123/hongguo-web $UPSTREAM_TAG
 
-          - 上游版本：v${{ steps.check.outputs.upstream_version }}
+          - 上游版本：$UPSTREAM_TAG
           - 触发原因：版本号变化
           - 镜像地址：
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.check.outputs.upstream_version }}-docker\`
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
-
-          由 sync-upstream workflow 自动生成。"
+          "
               ;;
             upstream_commits)
               TITLE="自动同步到 v${{ steps.check.outputs.upstream_version }} (代码更新)"
-              NOTES="版本号未变（仍为 ${{ steps.check.outputs.upstream_version }}），但上游有新 commit
+              HEADER="版本号未变（仍为 ${{ steps.check.outputs.upstream_version }}），但上游有新 commit
 
-          - 上游版本：v${{ steps.check.outputs.upstream_version }}（未变）
+          - 上游版本：$UPSTREAM_TAG（未变）
           - 触发原因：上游有 fork 未合并的 commit
           - tag 带时间戳后缀：$TAG
           - 镜像地址：
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}\`
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
-
-          由 sync-upstream workflow 自动生成。"
+          "
               ;;
             force)
               TITLE="手动强制同步 v${{ steps.check.outputs.upstream_version }}"
-              NOTES="手动触发 sync-upstream workflow 并勾选 force=true
+              HEADER="手动触发 sync-upstream workflow 并勾选 force=true
 
-          - 上游版本：v${{ steps.check.outputs.upstream_version }}
+          - 上游版本：$UPSTREAM_TAG
           - 触发原因：手动强制
           - tag 带时间戳后缀：$TAG
           - 镜像地址：
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}\`
             - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
-
-          由 sync-upstream workflow 自动生成。"
+          "
               ;;
             *)
               TITLE="自动同步 v${{ steps.check.outputs.upstream_version }}"
-              NOTES="触发原因：$REASON"
+              HEADER="触发原因：$REASON
+
+          - 上游版本：$UPSTREAM_TAG
+          - 镜像地址：
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:${{ steps.tagcheck.outputs.tag }}\`
+            - \`ghcr.io/${{ github.repository_owner }}/hongguo-web:latest\`
+          "
               ;;
           esac
 
+          # 组装最终 notes：header + 分隔线 + 上游 release notes + 尾部说明
+          # 写到文件，避免 shell 转义复杂字符串（反引号、$ 等）出问题
+          # 注意：上游 notes 和 HEADER 里都可能含反引号（markdown 代码块），
+          #       不能用 heredoc 或 echo "$VAR"，要用 printf '%s' 避免转义
+          OUT="/tmp/fork_release_notes.md"
+          {
+            printf '%s\n\n' "$HEADER"
+            echo "---"
+            echo ""
+            echo "## 上游 $UPSTREAM_TAG 发布说明"
+            echo ""
+            cat "$NOTES_FILE"
+            echo ""
+            echo "---"
+            echo ""
+            echo "由 sync-upstream workflow 自动生成。"
+          } > "$OUT"
+
+          echo "--- fork release notes 预览 ---"
+          cat "$OUT"
+          echo "----------------------------------------"
+
           # 用 gh CLI 创建 release（同时创建 tag）
+          # 不用 --generate-notes 了，我们自己组装的 notes 已经包含上游 changelog
           gh release create "$TAG" \
             --repo "$REPO" \
             --target main \
             --title "$TITLE" \
-            --notes "$NOTES" \
-            --generate-notes
+            --notes-file "$OUT"
 
           echo "✅ 已创建 release 和 tag: $TAG"
           echo ""
